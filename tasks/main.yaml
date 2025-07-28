@@ -40,6 +40,11 @@
       tags:
         - ufw
 
+    - name: Install and Configure OpenVPN
+      ansible.builtin.include_tasks: openvpn-debian.yaml
+      tags:
+        - openvpn
+
 
 
 ## RedHat family tasks block
