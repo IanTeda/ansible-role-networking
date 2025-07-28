@@ -1,0 +1,79 @@
+# ==============================================================================
+# GIT IGNORE 
+# ------------------------------------------------------------------------------
+#
+# .gitignore 
+#
+# This file specifies intentionally untracked files that Git should ignore. Files 
+# already tracked by Git and then added will stay in git, but will not commit updates.
+#
+# Dot File Strategy: Ignore all dot files by default (.*) then explicitly allow
+# important configuration files that should be version controlled.
+#
+# For more information: https://git-scm.com/docs/gitignore
+
+# Ignore all dot files by default, execpt for:
+.*
+!.gitignore
+!.gitattributes
+!.gitkeep
+!.github/
+!.vscode/
+!.editorconfig
+!.prettierrc*
+!.eslintrc*
+!.env.example
+!.nvmrc
+!.node-version
+
+# Ignore tmp and temporary files
+/tmp
+*.tmp
+*.temp
+*~
+
+# Ignore Logs and log file
+/logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Ignore dependency directories
+node_modules/
+jspm_packages/
+
+# Ignore compressed files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+
+# Ignore build output artifacts
+dist/
+build/
+out/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+*.swp
+*.swo
