@@ -1,0 +1,23 @@
+# ==============================================================================
+# NETWORKING ROLE DEFAULT VARIABLES
+# ==============================================================================
+#
+# Default configuration variables for the Ansible networking role.
+#
+# These variables can be overridden, with group, host or playbook specific variables
+# using the same name:
+#   - group_vars/
+#   - host_vars/
+#   - playbook vars
+#
+# NOTE: Ansible will override everything under the root boilerplate_ variable. 
+# Meaning you need to include all variables when overriding, else the other variables 
+# will not be found.
+#
+# Copy the below defaults into your host_var file and overwrite with host specific
+# variables
+# ------------------------------------------------------------------------------
+
+---
+
+# ---------------------------- [ NETWORKING ] ----------------------------------

@@ -1,0 +1,33 @@
+# ------------------------------------------------------------------------------
+# Valkey Role Handlers
+# ------------------------------------------------------------------------------
+#
+# Handlers are special tasks that only run when triggered by other tasks.
+# They are typically used for service restarts, reloads, or other actions
+# that should only happen when configuration changes occur.
+#
+# Triggering handlers:
+#   - Tasks use 'notify: handler_name' to trigger handlers
+#   - Handlers only run if the notifying task reports 'changed' status
+#   - All handlers run at the end of the play (after all tasks complete)
+#   - Handlers run in the order they are defined, not notification order
+#   - Each handler runs only once per play, even if notified multiple times
+#
+# Task usage example:
+#   - name: Update SSHD config
+#     template:
+#       src: templates/sshd.conf.j2
+#       dest: /etc/sshd/sshd.conf
+#     notify: SSHD Restart
+#
+# ------------------------------------------------------------------------------
+
+---
+
+- name: SSHD Restart
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true

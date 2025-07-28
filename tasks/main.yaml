@@ -1,0 +1,59 @@
+# ==============================================================================
+# NETWORKING ROLE MAIN TASKS
+# ------------------------------------------------------------------------------
+#
+# Main task file for the Networking role.
+# Detects the operating system and includes appropriate task files.
+#
+# ==============================================================================
+
+---
+
+- name: Detect operating system
+  ansible.builtin.debug:
+    msg: "Detected OS: {{ ansible_os_family }} ({{ ansible_distribution }} {{ ansible_distribution_version }})"
+  tags:
+    - always
+
+
+
+## DEBIAN FAMILY TASKS BLOCK
+# This block is run when "Debian" is the host operating systems
+# ------------------------------------------------------------------------------
+
+- name: Debian family tasks block
+  when: ansible_os_family == "Debian"
+  block:
+    - name: Starting the Debian Block
+      ansible.builtin.debug:
+        msg: "Starting tasks for Debian"
+      tags:
+        - always
+
+    - name: Install <Service>
+      ansible.builtin.include_tasks: <service>-debian.yaml
+      tags:
+        - <service>
+        - debian
+
+
+
+## RedHat family tasks block
+# ------------------------------------------------------------------------------
+- name: Include RedHat-specific tasks
+  when: ansible_os_family == "RedHat"
+  block:
+    - name: Starting the RedHat Block
+      ansible.builtin.debug:
+        msg: "Starting tasks for RedHat"
+
+
+
+## Fail if unsupported operating system
+# ------------------------------------------------------------------------------
+- name: Fail if unsupported operating system
+  ansible.builtin.fail:
+    msg: "Unsupported operating system: {{ ansible_os_family }} ({{ ansible_distribution }})"
+  when: ansible_system != "Linux" and ansible_os_family not in ["Debian", "RedHat"]
+  tags:
+    - always
