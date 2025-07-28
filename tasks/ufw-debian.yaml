@@ -1,0 +1,140 @@
+---
+# UFW FIREWALL HARDENING TASKS
+# ============================
+#
+# This task file configures the Uncomplicated Firewall (UFW) for hardening on Debian-based systems.
+#
+# Features:
+#   - Installs and enables UFW
+#   - Allows SSH access only from specified local networks to prevent lockout
+#   - Allows all traffic from localhost
+#   - Denies all other incoming connections by default
+#
+# Usage:
+#   Include this file in your playbook or role to apply a secure, local-network-only firewall policy.
+#
+# Requirements:
+#   - The 'community.general' collection for the ufw module
+#   - Define or adjust 'networking_networks.local' as needed for your environment
+#
+
+- name: Ensure UFW is installed
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: yes
+  become: true
+  tags:
+    - install
+
+- name: Allow all traffic from localhost
+  community.general.ufw:
+    rule: allow
+    src: 127.0.0.1
+    comment: "ALLOW ALL traffic from LOCALHOST"
+  become: true
+  notify: UFW Restart 
+  tags:
+    - install
+    - config
+
+- name: Allow SSH connections - anti lockout
+  community.general.ufw:
+    rule: allow
+    name: OpenSSH
+    comment: "ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT"
+    src: '{{ item }}'
+  loop: "{{ networking_networks.local }}"
+  become: true
+  notify: UFW Restart 
+  tags:
+    - install
+    - config
+
+- name: Ensure UFW service enabled and started
+  ansible.builtin.systemd:
+    name: ufw
+    state: started
+    enabled: true
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Enable UFW and ensure it is running
+  community.general.ufw:
+    state: enabled
+    policy: deny
+  become: true
+  tags:
+    - install
+    - config
+
+
+
+## VERIFICATIONS & HEALTH CHECKS
+# Confirm the operations of the firewall
+# ------------------------------------------------------------------------------
+
+- name: Check UFW status is active
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+  failed_when: "'Status: active' not in ufw_status.stdout"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Ensure UFW default policy is deny incoming
+  ansible.builtin.command: ufw status verbose
+  register: ufw_policy
+  changed_when: false
+  failed_when: "'Default: deny (incoming)' not in ufw_policy.stdout"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Ensure localhost is allowed
+  ansible.builtin.command: ufw status
+  register: ufw_localhost
+  changed_when: false
+  failed_when: "'127.0.0.1' not in ufw_localhost.stdout"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Ensure ANTI LOCKOUT is allowed
+  ansible.builtin.command: ufw status
+  register: ufw_localhost
+  changed_when: false
+  failed_when: "'ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT' not in ufw_localhost.stdout"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Display UFW status for review
+  ansible.builtin.command: ufw status verbose
+  register: ufw_status_verbose
+  changed_when: false
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Show UFW status output
+  ansible.builtin.debug:
+    var: ufw_status_verbose.stdout
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck

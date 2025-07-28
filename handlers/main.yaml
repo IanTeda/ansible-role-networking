@@ -24,9 +24,9 @@
 
 ---
 
-- name: SSHD Restart
+- name: UFW Restart
   ansible.builtin.systemd:
-    name: sshd
+    name: ufw
     state: restarted
     enabled: true
     daemon_reload: true
