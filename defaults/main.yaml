@@ -27,7 +27,7 @@ networking_networks:
   local: "{{ vault_networks_local }}"
   lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
   unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
-  primary_network_interface: 'eth0'
+  primary_network_interface: 'eth0'                     # Primary computer network interface
 
 ## SSH Configuration
 networking_ssh:
@@ -42,5 +42,14 @@ networking_ssh:
 networking_vpn_client:
   user: 'root'
   group: 'root'
-  config_download: "{{ vault_vpn_config_download }}"  # URL to download OpenVPN config zip
+  config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
   vpn_server: '{{ vault_vpn_server }}'
+
+## Nginx Configuration
+networking_nginx:
+  user: 'root'
+  group: 'root'
+  hostname: "{{ ansible_hostname }}"                   # Hostname for Nginx server
+  sites_available_dir: "/etc/nginx/sites-available"    # Directory for Nginx site configurations
+  sites_enabled_dir: "/etc/nginx/sites-enabled"        # Directory for enabled Nginx sites
+  sites_location_dir: "/etc/nginx/conf.d"              # Directory for Nginx location blocks

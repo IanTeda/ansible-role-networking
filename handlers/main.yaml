@@ -31,3 +31,12 @@
     enabled: true
     daemon_reload: true
   become: true
+
+
+- name: Nginx Restart
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true

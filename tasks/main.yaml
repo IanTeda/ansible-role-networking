@@ -45,6 +45,10 @@
       tags:
         - openvpn
 
+    - name: Install and Configure Nginx
+      ansible.builtin.include_tasks: nginx-debian.yaml  
+      tags:
+        - nginx
 
 
 ## RedHat family tasks block

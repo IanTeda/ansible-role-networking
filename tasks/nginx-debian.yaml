@@ -1,0 +1,389 @@
+---
+# NGINX INSTALLATION AND CONFIGURATION TASKS
+# =========================================
+#
+# This task file installs and configures Nginx web server on Debian-based systems.
+#
+# Features:
+#   - Installs Nginx from package repositories
+#   - Creates a basic secure configuration
+#   - Sets up SSL/TLS with self-signed certificates (optional)
+#   - Configures firewall rules to allow HTTP/HTTPS traffic
+#   - Enables and starts the Nginx service
+#
+# Usage:
+#   Include this file in your playbook or role for basic Nginx setup.
+#
+
+
+
+## 00. SET NGINX ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set Nginx role facts
+  ansible.builtin.set_fact:
+    nginx_user: '{{ networking_nginx.user }}'
+    nginx_group: '{{ networking_nginx.group }}'
+    nginx_config_file: "/etc/nginx/nginx.conf"
+    nginx_sites_available: "{{ networking_nginx.sites_available_dir }}"
+    nginx_sites_enabled: "{{ networking_nginx.sites_enabled_dir }}"
+    nginx_sites_location: "{{ networking_nginx.sites_location_dir }}"
+    nginx_ssl_dir: "/etc/nginx/ssl"
+    nginx_server_name: "{{ networking_nginx.hostname }}"
+    nginx_systemd_name: "nginx"
+  tags:
+    - install
+    - config
+    - healthcheck
+    - uninstall
+
+- name: Display Nginx variables for debugging
+  ansible.builtin.debug:
+    var: networking_nginx
+  tags:
+    - debug
+
+- name: Display Nginx facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> nginx_user: {{ nginx_user }}"
+      - "Fact -> nginx_group: {{ nginx_group }}"
+      - "Fact -> nginx_config_file: {{ nginx_config_file }}"
+      - "Fact -> nginx_sites_available: {{ nginx_sites_available }}"
+      - "Fact -> nginx_sites_enabled: {{ nginx_sites_enabled }}"
+      - "Fact -> nginx_sites_location: {{ nginx_sites_location }}"
+      - "Fact -> nginx_server_name: {{ nginx_server_name }}"
+      - "Fact -> nginx_systemd_name: {{ nginx_systemd_name }}"
+  tags:
+    - debug
+
+- name: Confirm Nginx ninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Nginx Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the Nginx service from this system.
+      
+      This will remove:
+      🗑️  Nginx APT package
+      🗑️  Configuration files: {{ nginx_config_dir }}/
+      🗑️  UFW firewall rules
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags:
+    - never
+    - uninstall
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The Nginx service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags:
+    - never
+    - uninstall
+
+
+## 01. SHUTDOWN NGINX SERVICES
+# This section ensures that the service is stopped before config any changes and 
+# updates are applied to prevent conflict issues.
+# -----------------------------------------------------------------------------
+
+- name: Check if Nginx service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ nginx_systemd_name }}.service"
+  register: service_file
+  tags:
+    - install
+    - config
+
+- name: Ensure Nginx service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ nginx_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: service_file.stat.exists
+  tags:
+    - install
+    - config
+
+- name: Stop and disable Nginx service for uninstallation
+  ansible.builtin.systemd:
+    name: "{{ nginx_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+
+
+## 02. INSTALL AND CONFIGURE NGINX
+# This section sets up the configuration files file for the service
+# -----------------------------------------------------------------------------
+
+- name: Install Nginx proxy and php support
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - php-fpm
+    state: present
+    update_cache: yes
+  become: true
+  tags:
+    - install
+
+- name: Create Nginx configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "{{ nginx_sites_available }}"
+    - "{{ nginx_sites_enabled }}"
+    - "{{ nginx_sites_location }}"
+    - "{{ nginx_ssl_dir }}"
+  become: true
+  tags:
+    - install
+    - config
+
+
+- name: Remove directories for Nginx service on uninstall
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ nginx_sites_available }}"
+    - "{{ nginx_sites_enabled }}"
+    - "{{ nginx_sites_location }}"
+    - "{{ nginx_ssl_dir }}"
+  become: true
+  tags:
+    - never
+    - uninstall
+
+- name: Generate private key for Nginx
+  community.crypto.openssl_privatekey:
+    path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.key"
+    size: 2048
+    type: RSA
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Generate CSR for Nginx
+  community.crypto.openssl_csr:
+    path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.csr"
+    privatekey_path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.key"
+    common_name: "{{ nginx_server_name }}"
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Generate self-signed SSL certificate for Nginx
+  community.crypto.x509_certificate:
+    path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.crt"
+    privatekey_path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.key"
+    csr_path: "{{ nginx_ssl_dir }}/{{ nginx_server_name }}.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+365d"
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Deploy base Nginx configuration
+  ansible.builtin.template:
+    src: templates/nginx.conf.j2
+    dest: "{{ nginx_config_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Remove default Nginx site
+  ansible.builtin.file:
+    path: "{{ nginx_sites_enabled }}/default"
+    state: absent
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Deploy new default site
+  ansible.builtin.template:
+    src: "templates/nginx-server.conf.j2"
+    dest: "{{ nginx_sites_available }}/{{ nginx_server_name }}-server.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Enable default site
+  ansible.builtin.file:
+    src: "{{ nginx_sites_available }}/{{ nginx_server_name }}-server.conf"
+    dest: "{{ nginx_sites_enabled }}/{{ nginx_server_name }}-server.conf"
+    state: link
+  become: true
+  notify: Nginx Restart
+  tags:
+    - install
+    - config
+
+- name: Create web root directory
+  ansible.builtin.file:
+    path: "/var/www/{{ nginx_server_name }}-server"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Deploy Nginx Default index
+  ansible.builtin.template:
+    src: templates/nginx-index.html.j2
+    dest: "/var/www/{{ nginx_server_name }}-server/index.html"
+    owner: www-data
+    group: www-data
+    mode: '0644'
+    backup: yes
+  become: true
+  notify: Nginx Restart
+  tags:
+    - install
+    - config
+
+- name: Allow HTTP local network through firewall
+  community.general.ufw:
+    rule: allow
+    name: "WWW Full"
+    comment: "ALLOW HTTP/HTTPS (80 & 443/tpc) for LOCAL NET"
+    src: '{{ item }}'
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_syntax
+  failed_when: nginx_syntax.rc != 0
+  changed_when: false
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Enable and start Nginx service
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: yes
+  become: true
+  tags:
+    - install
+    - config
+
+
+## 08. VERIFICATIONS & HEALTH CHECKS
+# Confirm the operations of the openvpn & kill switch
+# ------------------------------------------------------------------------------
+
+- name: Verify Nginx service is enabled
+  ansible.builtin.systemd:
+    name: nginx
+  register: nginx_service_status
+  become: true
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Assert Nginx service is running
+  ansible.builtin.assert:
+    that:
+      - nginx_service_status.status.ActiveState == "active"
+      - nginx_service_status.status.SubState == "running"
+    fail_msg: "Nginx service is not running! Status: {{ nginx_service_status.status.ActiveState }}"
+    success_msg: "Nginx service is running successfully."
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify Nginx is listening on HTTP (80)
+  ansible.builtin.shell: ss -tnlp | grep ':80 '
+  register: nginx_http
+  changed_when: false
+  failed_when: nginx_http.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify Nginx is listening on HTTPS (443)
+  ansible.builtin.shell: ss -tnlp | grep ':443 '
+  register: nginx_https
+  changed_when: false
+  failed_when: nginx_https.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Wait for Nginx healthcheck endpoint to be available
+  ansible.builtin.uri:
+    url: "https://{{ ansible_fqdn }}/healthcheck"
+    validate_certs: false  # Set to true if using a valid certificate
+    status_code: 200
+    return_content: true
+  register: nginx_healthcheck
+  retries: 5
+  delay: 2
+  until: nginx_healthcheck.status == 200 and 'OK' in nginx_healthcheck.content
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Assert Nginx healthcheck endpoint returns OK
+  ansible.builtin.assert:
+    that:
+      - nginx_healthcheck.status == 200
+      - "'OK' in nginx_healthcheck.content"
+    fail_msg: "Nginx healthcheck endpoint is not healthy! Status: {{ nginx_healthcheck.status }}, Content: {{ nginx_healthcheck.content }}"
+    success_msg: "Nginx healthcheck endpoint is healthy."
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
