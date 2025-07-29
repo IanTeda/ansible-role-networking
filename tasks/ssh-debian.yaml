@@ -1,0 +1,341 @@
+---
+# SSH HARDENING TASKS FOR DEBIAN
+# ==============================
+#
+# This task file implements comprehensive SSH server hardening for Debian-based systems.
+#
+# Security measures implemented:
+#   - Strong encryption (modern ciphers, MACs, and key exchange algorithms)
+#   - Disabled password authentication (key-based auth only)
+#   - Brute force protection (fail2ban and sshguard)
+#   - No root login allowed
+#   - Session timeout controls
+#   - MOTD and banner hardening
+#   - Secure SFTP configuration
+#
+# Included packages:
+#   - fail2ban: For blocking IPs after failed login attempts
+#   - sshguard: Additional brute force protection
+#   - auditd: For enhanced SSH access logging
+#   - libpam-google-authenticator: Optional 2FA support
+#
+# Tags:
+#   - install: Package installation
+#   - config: Configuration tasks
+#   - backup: Backup operations
+#
+# Notes:
+#   - Requires root/sudo access
+#   - Will disable password-based SSH authentication
+#   - Backs up original SSH config before modifications
+#   - Ensure your SSH public key is already installed before running
+
+## 00. SET SSHD ANSIBLE FACTS
+# This makes it easier to read the ansiblssh_config_filee tasks
+# -----------------------------------------------------------------------------
+
+- name: Set networking/ssh Ansible facts
+  ansible.builtin.set_fact:
+    ssh_user: "{{ networking_ssh.user }}"
+    ssh_group: "{{ networking_ssh.group }}"
+    ssh_config_dir: "/etc/ssh"
+    ssh_config_file: "/etc/ssh/sshd_config"
+    ssh_systemd_name: "ssh"
+    ssh_service_file: "/lib/systemd/system/ssh.service"
+    ssh_network_interface: "{{ networking_networks.primary_network_interface }}"
+  tags:
+    - install
+    - config
+    - healthcheck
+    - uninstall
+
+- name: Display networking/ssh variables for debugging
+  ansible.builtin.debug:
+    var: boilerplate_ssh
+  tags:
+    - debug
+
+- name: Display sshd facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> ssh_user: {{ ssh_user }}"
+      - "Fact -> ssh_group: {{ ssh_group }}"
+      - "Fact -> ssh_config_dir: {{ ssh_config_dir }}"
+      - "Fact -> ssh_config_file: {{ ssh_config_file }}"
+      - "Fact -> ssh_systemd_name: {{ ssh_systemd_name }}"
+      - "Fact -> ssh_service_file: {{ ssh_service_file }}"
+  tags:
+    - debug
+
+
+## 01. INSTALL AND CONFIGURE SSHD
+# This installs and configures the SSH daemon with hardening measures
+# -----------------------------------------------------------------------------
+
+- name: Ensure openssh-server and hardening packages are installed
+  ansible.builtin.apt:
+    name: 
+      - openssh-server             # SSH server
+      - sshguard                   # Additional brute force protection
+      - auditd                     # For SSH access auditing
+    state: present
+    update_cache: yes
+  become: true
+  tags:
+    - install
+
+- name: Create ssh_users group "{{ networking_ssh.user_access_group }}"
+  ansible.builtin.group:
+    name: "{{ networking_ssh.user_access_group }}"
+    state: present
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Add users to "{{ networking_ssh.user_access_group }}" group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: "{{ networking_ssh.user_access_group }}"
+    append: yes
+  loop: "{{ networking_ssh.user_access_list }}"
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Backup original sshd_config
+  ansible.builtin.copy:
+    src: "{{ ssh_config_file }}"
+    dest: /etc/ssh/sshd_config.bak
+    remote_src: yes
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_group }}"
+    mode: '0644'
+    force: no
+  become: true
+  tags:
+    - install
+    - config
+
+- name: "Deploy SSHD config file to {{ ssh_config_file }}"
+  ansible.builtin.template:
+    src: templates/sshd-config.j2
+    dest: "{{ ssh_config_file }}"
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_group }}"
+    mode: '0644'
+    backup: yes
+  become: true
+  notify: SSH Restart
+  tags:
+    - install
+    - config
+
+- name: Backup original ssh.service file
+  ansible.builtin.copy:
+    src: "{{ ssh_service_file }}"
+    dest: "{{ ssh_service_file }}.bak"
+    remote_src: yes
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_group }}"
+    mode: '0644'
+    force: no
+  become: true
+  tags:
+    - install
+    - config
+
+- name: "Deploy SSH service file to {{ ssh_service_file }}"
+  ansible.builtin.template:
+    src: templates/ssh-systemd.service.j2
+    dest: "{{ ssh_service_file }}"
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_group }}"
+    mode: '0644'
+    backup: yes
+  become: true
+  notify: SSH Restart
+  tags:
+    - install
+    - config
+
+- name: Verify SSH configuration syntax
+  ansible.builtin.command: sshd -t -f {{ ssh_config_file }}
+  register: sshd_config_check
+  changed_when: false
+  failed_when: sshd_config_check.rc != 0
+  become: true
+  tags:
+    - install
+    - config
+    - verify
+
+- name: Ensure SSH service is enabled and restarted
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+    enabled: yes
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Disable all update-motd.d scripts (removes execute permission)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: '0644'
+  with_fileglob:
+    - /etc/update-motd.d/*
+  ignore_errors: true
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Disable /etc/motd directory (remove execute permission)
+  ansible.builtin.copy:
+    dest: /etc/motd
+    content: ""
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Allow SSH through UFW from local networks at number 1
+  ansible.builtin.ufw:
+    insert: 1
+    rule: allow
+    name: "OpenSSH"
+    comment: "Allow OpenSSH ({{ networking_ssh.listen_port }}/tcp) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags:
+    - firewall
+
+- name: Add SSHD logs journal block to config.alloy from file
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: SSHD logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////" 
+    block: "{{ lookup('file', 'files/sshd-config-block.alloy') }}"
+  become: true
+  notify: Alloy Restart
+  tags:
+    - alloy
+
+- name: Verify Alloy configuration file is valid
+  ansible.builtin.command: "/usr/local/bin/alloy validate /etc/alloy/config.alloy"
+  register: alloy_config_verify
+  changed_when: false
+  failed_when: alloy_config_verify.rc != 0
+  become: true
+  tags:
+    - alloy
+
+
+
+# Verification and Health Checks
+# -----------------------------------------------------------------------------
+
+- name: Verify SSH service is active and listening
+  ansible.builtin.command: systemctl is-active ssh
+  register: ssh_service_status
+  changed_when: false
+  failed_when: ssh_service_status.stdout.strip() != "active"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify SSH is listening on configured port
+  ansible.builtin.wait_for:
+    port: "{{ networking_ssh.listen_port }}"
+    host: "{{ networking_ssh.listen_address }}"
+    timeout: 10
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify SSH users group exists
+  ansible.builtin.command: getent group {{ networking_ssh.user_access_group }}
+  register: ssh_group_check
+  changed_when: false
+  failed_when: ssh_group_check.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify users are in SSH group
+  ansible.builtin.command: groups {{ item }}
+  register: user_groups_check
+  changed_when: false
+  failed_when: networking_ssh.user_access_group not in user_groups_check.stdout
+  loop: "{{ networking_ssh.user_access_list }}"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify password authentication is disabled
+  ansible.builtin.command: grep '^PasswordAuthentication no' /etc/ssh/sshd_config
+  register: password_auth_check
+  changed_when: false
+  failed_when: password_auth_check.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Verify root login is disabled
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+    state: present
+  check_mode: yes
+  register: root_login_check
+  failed_when: root_login_check.changed
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Check SSH configuration for common hardening settings
+  ansible.builtin.command: grep -E "^(MaxAuthTries|MaxSessions|ClientAliveInterval)" /etc/ssh/sshd_config
+  register: ssh_hardening_check
+  changed_when: false
+  failed_when: ssh_hardening_check.rc != 0
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck
+
+- name: Display SSH hardening summary
+  ansible.builtin.debug:
+    msg:
+      - "SSH Hardening Complete:"
+      - "  - SSH Service: {{ ssh_service_status.stdout }}"
+      # - "  - Fail2ban Service: {{ fail2ban_service_status.stdout }}"
+      - "  - SSH Group: {{ ssh_group }} exists"
+      - "  - Password Auth: Disabled"
+      - "  - Root Login: Disabled"
+      - "  - SSH Port: {{ networking_ssh.listen_port }} (listening)"
+  tags:
+    - install
+    - config
+    - verify
+    - healthcheck

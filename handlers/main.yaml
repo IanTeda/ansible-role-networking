@@ -40,3 +40,11 @@
     enabled: true
     daemon_reload: true
   become: true
+
+- name: SSH Restart
+  ansible.builtin.systemd:
+    name: ssh
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true

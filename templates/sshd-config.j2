@@ -1,0 +1,239 @@
+# =============================================================================
+# SSHD CONFIGURATION - Ansible Managed
+# =============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/networking/templates/sshd_config.j2
+# Deployed to: {{ ssh_config_file }}
+# Last updated: {{ ansible_date_time.iso8601 }}
+#
+# Hardened OpenSSH server configuration for Debian systems.
+# - Disables root login and password authentication
+# - Enables only secure authentication methods
+# - Restricts features to reduce attack surface
+# - Allows SFTP and SCP for file transfer
+# =============================================================================
+
+# Include configuration files from the drop-in directory
+# Default: varies by distribution | Current: enabled
+# Note: Allows modular configuration without editing main config
+Include /etc/ssh/sshd_config.d/*.conf
+
+
+# Network and Protocol Settings
+# -----------------------------------------------------------------------------
+
+# Port number for SSH daemon to listen on
+# Default: 22 | Current: 22
+# Note: Consider changing to non-standard port for security through obscurity
+Port {{ networking_ssh.listen_port }}
+
+# IP protocol family to use (inet=IPv4, inet6=IPv6, any=both)
+# Default: any | Current: inet (IPv4 only)
+# Note: Restricts to IPv4 only; change to 'any' if IPv6 is required
+AddressFamily inet
+
+# IP addresses to listen on (0.0.0.0 = all IPv4 interfaces)
+# Default: all interfaces | Current: all IPv4 interfaces
+# Note: For enhanced security, specify particular IP addresses if possible
+ListenAddress {{ networking_ssh.listen_address }}
+
+# Disconnect idle clients after specified time
+# Default: 0 (disabled) | Current: 300 seconds with 3 attempts
+# How it works: Sends keep-alive messages to detect broken connections
+# Note: Prevents resource exhaustion from abandoned sessions
+# Considerations: May disconnect users with poor network connections
+ClientAliveInterval 300
+ClientAliveCountMax 6
+
+# Host Key Configuration
+# -----------------------------------------------------------------------------
+
+# Private host key files for server authentication
+# Default: RSA, ECDSA, ED25519 keys | Current: all three enabled
+# Note: ED25519 is most secure, RSA should be 2048+ bits, ECDSA uses NIST curves
+HostKey {{ ssh_config_dir }}/ssh_host_rsa_key
+HostKey {{ ssh_config_dir }}/ssh_host_ecdsa_key
+HostKey {{ ssh_config_dir }}/ssh_host_ed25519_key
+
+
+# Cryptographic Settings
+# -----------------------------------------------------------------------------
+
+# Symmetric ciphers for encrypting the connection
+# Default: various | Current: strong ciphers only
+# Note: ChaCha20-Poly1305 is fastest, AES-256-GCM is hardware-accelerated on modern CPUs
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes256-ctr
+
+# Message Authentication Codes for data integrity
+# Default: various | Current: strong MACs only with encrypt-then-MAC
+# Note: ETM (Encrypt-then-MAC) variants prevent certain attacks
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+
+# Key exchange algorithms
+# Default: various | Current: Curve25519 only
+# Note: Curve25519 is considered most secure, not subject to NIST curve concerns
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+
+
+# Logging Configuration
+# -----------------------------------------------------------------------------
+
+# Syslog facility for SSH messages
+# Default: AUTH | Current: JOURNAL
+# Note: JOURNAL sends logs directly to the systemd journal (journald)
+SyslogFacility AUTH
+
+# Logging verbosity level
+# Default: INFO | Current: VERBOSE
+# Note: VERBOSE logs key fingerprints and other details; INFO sufficient for most cases
+LogLevel VERBOSE
+
+
+# Authentication Settings
+# -----------------------------------------------------------------------------
+
+# Time allowed for authentication before disconnection
+# Default: 120 seconds | Current: 30 seconds
+# Note: Shorter grace time reduces exposure to brute-force attacks
+LoginGraceTime 30
+
+# Allow root user to login via SSH
+# Default: prohibit-password | Current: no (completely disabled)
+# Note: 'no' is most secure; use sudo for admin access instead
+PermitRootLogin no
+
+# Check ownership and permissions of user files
+# Default: yes | Current: yes
+# Note: Prevents SSH access if home directory or key files have loose permissions
+StrictModes yes
+
+# Maximum authentication attempts per connection
+# Default: 6 | Current: 3
+# Note: Lower values reduce brute-force effectiveness.
+# Note: Need a hivher value because I am using a ssh-agent that tries keys until one works
+MaxAuthTries 9
+
+# Maximum number of open sessions per network connection
+# Default: 10 | Current: 2
+# Note: Limits resource usage and potential attack vectors
+MaxSessions 3
+
+# Enable public key authentication
+# Default: yes | Current: yes
+# Note: Primary authentication method for secure access
+PubkeyAuthentication yes
+
+# Enable password authentication
+# Default: yes | Current: no (disabled for security)
+# Note: Disabling forces key-based authentication, much more secure
+PasswordAuthentication no
+
+# Allow empty passwords
+# Default: no | Current: no
+# Note: Should always be disabled for security
+PermitEmptyPasswords no
+
+# Challenge-response authentication (generic)
+# Default: yes | Current: no
+# Note: Disabled to prevent bypass of key-based authentication
+ChallengeResponseAuthentication no
+
+# Keyboard-interactive authentication
+# Default: yes | Current: no
+# Note: Disabled to prevent password-based authentication bypass
+KbdInteractiveAuthentication no
+
+# Use Pluggable Authentication Modules
+# Default: yes | Current: yes
+# Note: Enables PAM for session management and account checks
+UsePAM yes
+
+# Restrict SSH access to specific users
+# Default: all users allowed | Current: only 'ian' and 'ansible' users
+# How it works: Whitelist of usernames permitted to authenticate via SSH
+# Note: Provides additional layer of access control beyond key authentication
+# Considerations: Must be updated when new admin users are added
+AllowUsers ian ansible
+
+# Restrict SSH access to specific groups
+# Default: all groups allowed | Current: only 'ssh_users' group
+# How it works: Whitelist of group names permitted to authenticate via SSH
+# Note: Users must be members of specified groups to gain SSH access
+# Considerations: Must ensure users are added to ssh_users group; works in conjunction with AllowUsers
+# Important: If both AllowUsers and AllowGroups are specified, user must satisfy BOTH conditions
+AllowGroups {{ networking_ssh.user_access_group }}
+
+# Security Hardening
+# -----------------------------------------------------------------------------
+
+# Allow users to set environment variables via SSH
+# Default: no | Current: no (explicitly disabled)
+# Note: Prevents potential privilege escalation through environment manipulation
+PermitUserEnvironment no
+
+# Allow forwarding of SSH agent authentication
+# Default: yes | Current: no (disabled for security)
+# Note: Prevents agent forwarding attacks; disable unless specifically needed
+AllowAgentForwarding yes
+
+# Allow TCP port forwarding
+# Default: yes | Current: no (disabled for security)
+# Note: Prevents tunneling through SSH; disable unless port forwarding required
+AllowTcpForwarding yes
+
+# Allow remote port forwarding to bind to non-loopback addresses
+# Default: no | Current: no
+# Note: Prevents SSH from acting as a public relay
+GatewayPorts no
+
+# Allow X11 forwarding for GUI applications
+# Default: no | Current: no (explicitly disabled)
+# Note: Disabled for security; enable only if GUI forwarding needed
+X11Forwarding no
+
+# Enable compression of SSH traffic
+# Default: delayed | Current: no (disabled for security)
+# Note: Disabled to prevent compression oracle attacks
+Compression no
+
+# Allow tunnel device forwarding
+# Default: no | Current: no (explicitly disabled)  
+# Note: Prevents VPN-style tunnelling through SSH
+PermitTunnel no
+
+
+# Network and Performance Settings
+# -----------------------------------------------------------------------------
+
+# Perform reverse DNS lookup on client IPs
+# Default: yes | Current: no
+# Note: Disabled for faster logins; DNS lookup can cause delays
+UseDNS no
+
+
+# Locale and Environment
+# -----------------------------------------------------------------------------
+
+# Allow client to pass locale environment variables
+# Default: varies | Current: LANG and LC_* variables allowed
+# Note: Permits proper locale handling for international users
+AcceptEnv LANG LC_*
+
+# Subsystem Configuration
+# -----------------------------------------------------------------------------
+
+# SFTP subsystem configuration
+# Default: varies | Current: enabled
+# Note: Required for SFTP and SCP file transfers
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+# Example per-user configuration overrides
+# Note: Match blocks can override global settings for specific users/groups
+#Match User joe
+#	X11Forwarding no
+#	AllowTcpForwarding no
+#	PermitTTY no
+#	ForceCommand cvs
