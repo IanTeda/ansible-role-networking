@@ -56,6 +56,7 @@ Wants=systemd-networkd-wait-online@{{ ssh_network_interface }}.service
 # This allows for disabling SSH without removing the service file
 ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
 
+
 [Service]
 EnvironmentFile=-/etc/default/ssh
 ExecStartPre=/usr/sbin/sshd -t
@@ -77,18 +78,6 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ssh
 
-# Hardening measures
-# NOTE: RestrictAddressFamilies messes with sshd - so we are not using it
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=read-only
-NoNewPrivileges=true
-PrivateDevices=true
-MemoryDenyWriteExecute=true
-SystemCallArchitectures=native
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictRealtime=true
 
 [Install]
 WantedBy=multi-user.target
