@@ -36,6 +36,7 @@
     vpn_client_binary_path: "/usr/sbin/openvpn"
     vpn_client_systemd_name: "openvpn@client.service"
     vpn_client_config_download: "{{ networking_vpn_client.config_download }}"
+    vpn_primary_network_interface: "{{ networking_networks.primary_network_interface }}"
   tags:
     - install
     - config
@@ -155,6 +156,19 @@
   tags:
     - install
 
+- name: Uninstall OpenVPN package
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.apt:
+    name:
+      - openvpn
+    state: absent
+    update_cache: true
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
 
 ## 04. SETUP CONFIG FILES FOR OPENVPN
 # This section sets up the configuration files file for the service
@@ -226,6 +240,25 @@
     - install
     - config
 
+- name: Remove OpenVPN config folder
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ vpn_client_config_dir }}",   mode: "u=rwx,g=rw,o=" }
+  become: true
+  tags:
+    - never 
+    - uninstall
+
+
+
+## 04. SETUP UFW KILL SWITCH
+# This section sets up the UFW VPN kill switch rules to block all traffic
+# that is not going through the VPN interface (tun0) and allows local network access.
+# -----------------------------------------------------------------------------
+
 - name: Backup original UFW before.rules if not already backed up
   ansible.builtin.copy:
     src: /etc/ufw/before.rules
@@ -252,10 +285,25 @@
     - install
     - config
 
+- name: Restore original UFW before.rules from backup
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules.orig
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+    remote_src: true
+    force: true
+  become: true
+  tags:
+    - uninstall
+    - restore
+
 - name: Deploy static route for VPN clients exists
   ansible.builtin.template:
     src: templates/openvpn-static-unifi-vpn-route.network.j2
-    dest: /etc/systemd/network/10-static-vpn-route.network
+    dest: /etc/systemd/network/20-static-vpn-route.network
     owner: root
     group: root
     mode: '0644'
@@ -263,6 +311,16 @@
   tags:
     - install
     - config
+
+- name: Remove static route for VPN clients exists
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /etc/systemd/network/20-static-vpn-route.network
+    state: absent
+  become: true
+  tags:
+    - never 
+    - uninstall
 
 - name: Restart systemd-networkd to enable static route
   ansible.builtin.systemd:
@@ -272,6 +330,7 @@
   tags:
     - install
     - config
+    - uninstall
 
 - name: Reload, enable and start OpenVPN client service
   ansible.builtin.service:

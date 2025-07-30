@@ -60,25 +60,25 @@
 -A ufw-before-input -i tun0 -j ACCEPT
 
 # Explicitly drop all other incoming traffic on the physical interface
--A ufw-before-input -i {{ networking_networks.primary_network_interface }} -j DROP
+-A ufw-before-input -i {{ vpn_primary_network_interface }} -j DROP
 
 # Allow VPN connection establishment on common UDP ports (from eth0)
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --dport 1198 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --dport 1197 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --dport 1194 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --dport 8080 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --dport 9201 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1198 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1197 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1194 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 8080 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 9201 -j ACCEPT
 
 # Allow DNS queries (UDP 53) only to DNS servers
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp -d 10.0.0.242 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 10.0.0.242 --dport 53 -j ACCEPT
 
 # Allow DHCP client to work
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
 
-# Drop all other outgoing traffic on {{ networking_networks.primary_network_interface }} (blocks leaks if VPN goes down)
--A ufw-before-output -o {{ networking_networks.primary_network_interface }} -j DROP
+# Drop all other outgoing traffic on {{ vpn_primary_network_interface }} (blocks leaks if VPN goes down)
+-A ufw-before-output -o {{ vpn_primary_network_interface }} -j DROP
 
 #-- END VPN KILL SWITCH
 
