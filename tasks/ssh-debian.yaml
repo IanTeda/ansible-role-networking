@@ -1,34 +1,47 @@
 ---
-# SSH HARDENING TASKS FOR DEBIAN
-# ==============================
+
+# ====================================================================================================
+# Ansible Task File: roles/networking/tasks/ssh-debian.yaml
+# ----------------------------------------------------------------------------------------------------
+# Purpose: Harden SSH server configuration on Debian-based systems using Ansible.
+# Managed by: Ansible (do not edit on target systems)
 #
-# This task file implements comprehensive SSH server hardening for Debian-based systems.
-#
-# Security measures implemented:
-#   - Strong encryption (modern ciphers, MACs, and key exchange algorithms)
-#   - Disabled password authentication (key-based auth only)
-#   - Brute force protection (fail2ban and sshguard)
+# Features:
+#   - Strong encryption (modern ciphers, MACs, KEX)
+#   - Disables password authentication (key-based only)
+#   - Brute force protection (fail2ban, sshguard)
 #   - No root login allowed
-#   - Session timeout controls
-#   - MOTD and banner hardening
+#   - Session timeout and idle controls
+#   - MOTD/banner hardening
 #   - Secure SFTP configuration
+#   - Automated config and service backups
+#   - UFW firewall integration
+#   - Health and verification checks
 #
-# Included packages:
-#   - fail2ban: For blocking IPs after failed login attempts
-#   - sshguard: Additional brute force protection
-#   - auditd: For enhanced SSH access logging
-#   - libpam-google-authenticator: Optional 2FA support
+# Requirements:
+#   - Debian-based system
+#   - Systemd
+#   - Sufficient privileges (become: true)
 #
-# Tags:
-#   - install: Package installation
-#   - config: Configuration tasks
-#   - backup: Backup operations
+# Security Notes:
+#   - SSH config is backed up before changes
+#   - Password authentication and root login are disabled
+#   - Only allowed users/groups can access SSH
 #
-# Notes:
-#   - Requires root/sudo access
-#   - Will disable password-based SSH authentication
-#   - Backs up original SSH config before modifications
-#   - Ensure your SSH public key is already installed before running
+# Troubleshooting:
+#   - Check logs: journalctl -u ssh, /var/log/auth.log
+#   - Test SSH: ssh -v user@host -p <port>
+#   - If locked out, use console or recovery access
+#
+# References:
+#   - https://infosec.mozilla.org/guidelines/openssh.html
+#   - https://www.ssh-audit.com/hardening_guides.html
+#   - https://github.com/dev-sec/ansible-ssh-hardening
+#
+# Changelog:
+#   - 2025-07-30: Header updated for clarity and automation
+# ====================================================================================================
+
 
 ## 00. SET SSHD ANSIBLE FACTS
 # This makes it easier to read the ansiblssh_config_filee tasks
@@ -112,7 +125,7 @@
     owner: "{{ ssh_user }}"
     group: "{{ ssh_group }}"
     mode: '0644'
-    force: no
+    force: false
   become: true
   tags:
     - install
@@ -127,7 +140,6 @@
     mode: '0644'
     backup: yes
   become: true
-  notify: SSH Restart
   tags:
     - install
     - config
@@ -329,7 +341,6 @@
     msg:
       - "SSH Hardening Complete:"
       - "  - SSH Service: {{ ssh_service_status.stdout }}"
-      # - "  - Fail2ban Service: {{ fail2ban_service_status.stdout }}"
       - "  - SSH Group: {{ ssh_group }} exists"
       - "  - Password Auth: Disabled"
       - "  - Root Login: Disabled"
