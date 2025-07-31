@@ -1,13 +1,13 @@
 # ============================================================================ #
-# OpenVPN Kill Switch UFW Rules Template                                      #
+# OpenVPN Kill Switch UFW Rules Template                                       #
 # ============================================================================ #
 # ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️ 
 # Any manual changes will be overwritten on the next Ansible run.
 # Edit the template file or Ansible variables instead.
 #
-# file_path: roles/openvpn/templates/openvpn_kill_switch.rules.j2
+# Template:   roles/openvpn/templates/openvpn_kill_switch.rules.j2
+# Deploy to:  /etc/ufw/before.rules
 # =============================================================================
-# /etc/ufw/before.rules
 #
 # Rules that should be run before the ufw command line added rules. Custom
 # rules should be added to one of these chains:
@@ -41,7 +41,9 @@
 # drop INVALID packets
 -A ufw-before-input -m state --state INVALID -j DROP
 
-##-- START VPN KILL SWITCH
+
+
+# --------------------- [START VPN KILL SWITCH] -------------------------------
 
 # Allow all outgoing traffic through the VPN tunnel interface (tun0)
 -A ufw-before-output -o tun0 -j ACCEPT
@@ -56,30 +58,38 @@
 -A ufw-before-input -s 172.16.0.0/12 -j ACCEPT
 -A ufw-before-input -s 192.168.0.0/16 -j ACCEPT
 
+# Allow through physical interface, outgoing to VPN client server IPs (resolved in the ansible task) + tcp/udp port
+{% for ip in vpn_client_server_ips %}
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -d {{ ip }} -p tcp --dport {{ vpn_client_server_port }} -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -d {{ ip }} -p udp --dport {{ vpn_client_server_port }} -j ACCEPT
+{% endfor %}
+
 # Allow all incoming traffic from the VPN tunnel interface (tun0)
 -A ufw-before-input -i tun0 -j ACCEPT
 
 # Explicitly drop all other incoming traffic on the physical interface
--A ufw-before-input -i {{ vpn_primary_network_interface }} -j DROP
+-A ufw-before-input -i {{ vpn_client_primary_network_interface }} -j DROP
 
 # Allow VPN connection establishment on common UDP ports (from eth0)
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1198 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1197 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 1194 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 8080 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --dport 9201 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1198 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1197 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1194 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 8080 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 9201 -j ACCEPT
 
 # Allow DNS queries (UDP 53) only to DNS servers
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp -d 10.0.0.242 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 10.0.0.242 --dport 53 -j ACCEPT
 
 # Allow DHCP client to work
--A ufw-before-output -o {{ vpn_primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
 
-# Drop all other outgoing traffic on {{ vpn_primary_network_interface }} (blocks leaks if VPN goes down)
--A ufw-before-output -o {{ vpn_primary_network_interface }} -j DROP
+# Drop all other outgoing traffic on {{ vpn_client_primary_network_interface }} (blocks leaks if VPN goes down)
+# Uncomment logging if you want to see dropped packets in the logs
+#-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j LOG --log-prefix "UFW-KILLSWITCH-DROP: "
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j DROP
 
-#-- END VPN KILL SWITCH
+# ------------------------ [END VPN KILL SWITCH] -------------------------------
 
 COMMIT

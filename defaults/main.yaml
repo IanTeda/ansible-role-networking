@@ -27,7 +27,6 @@ networking_networks:
   local: "{{ vault_networks_local }}"
   lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
   unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
-  primary_network_interface: 'eth0'                     # Primary computer network interface
 
 ## SSH Configuration
 networking_ssh:
