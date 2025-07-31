@@ -58,7 +58,7 @@
   tags:
     - debug
 
-- name: Confirm Nginx ninstallation
+- name: Confirm Nginx uninstallation
   ansible.builtin.pause:
     prompt: |
       ⚠️  WARNING: Nginx Uninstallation Confirmation ⚠️

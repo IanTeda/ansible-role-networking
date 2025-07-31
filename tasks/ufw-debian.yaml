@@ -18,14 +18,167 @@
 #   - Define or adjust 'networking_networks.local' as needed for your environment
 #
 
+## 00. SET UFW ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set UFW role facts
+  ansible.builtin.set_fact:
+    ufw_user: "{{ networking_ufw.user }}"
+    ufw_group: "{{ networking_ufw.group }}"
+    ufw_config_dir: "/etc/ufw"
+    ufw_config_file: "/etc/ufw/ufw.conf"
+    ufw_before_rules_file: "/etc/ufw/before.rules"
+    ufw_binary_path: "/usr/sbin/ufw"
+    ufw_systemd_name: "ufw"
+    ufw_primary_network_interface: "{{ networking_networks.primary_network_interface }}"
+  tags:
+    - install
+    - config
+    - healthcheck
+    - uninstall
+
+- name: Display UFW variables for debugging
+  ansible.builtin.debug:
+    var: networking_ufw
+  tags:
+    - debug
+
+- name: Display UFW facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> ufw_user: {{ ufw_user }}"
+      - "Fact -> ufw_group: {{ ufw_group }}"
+      - "Fact -> ufw_config_dir: {{ ufw_config_dir }}"
+      - "Fact -> ufw_config_file: {{ ufw_config_file }}"
+      - "Fact -> ufw_before_rules_file: {{ ufw_before_rules_file }}"
+      - "Fact -> ufw_binary_path: {{ ufw_binary_path }}"
+      - "Fact -> ufw_systemd_name: {{ ufw_systemd_name }}"
+      - "Fact -> ufw_primary_network_interface: {{ ufw_primary_network_interface }}"
+  tags:
+    - debug
+
+- name: Confirm UFW uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: UFW Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the UFW service from this system.
+      
+      This will remove:
+      🗑️  UFW APT package
+      🗑️  Configuration directory: /etc/ufw/
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags:
+    - never
+    - uninstall
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The ufw service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags:
+    - never
+    - uninstall
+
+
+
+## 03. DOWNLOAD UFW PACKAGE
+# This section downloads the ufw package
+# -----------------------------------------------------------------------------
+
 - name: Ensure UFW is installed
   ansible.builtin.apt:
     name: ufw
     state: present
     update_cache: yes
+    force: true
   become: true
   tags:
     - install
+
+
+## 01. SHUTDOWN UFW SERVICES
+# This section ensures that the service is stopped before config any changes and 
+# updates are applied to prevent conflict issues.
+# -----------------------------------------------------------------------------
+
+- name: Stop and disable UFW service for uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: "{{ ufw_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+- name: Uninstall UFW package
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.apt:
+    name:
+      - ufw
+    state: absent
+    update_cache: true
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
+
+## 04. SETUP CONFIG FILES FOR OPENVPN
+# This section sets up the configuration files file for the service
+# -----------------------------------------------------------------------------
+
+- name: Ensure UFW service enabled and started
+  ansible.builtin.systemd:
+    name: "{{ ufw_systemd_name }}"
+    state: started
+    enabled: true
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Ensure UFW is disabled to avoid lock out
+  community.general.ufw:
+    state: disabled
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Restore default rules from package defaults in "/usr/share/ufw/"
+  ansible.builtin.copy:
+    src: /usr/share/ufw/{{ item }}
+    dest: /etc/ufw/{{ item }}
+    owner: root
+    group: root
+    mode: '0644'
+    remote_src: yes
+  become: true
+  loop:
+    - after6.rules
+    - after.init
+    - after.rules
+    - before6.rules
+    - before.init
+    - before.rules
+    - ufw.conf
+    - user6.rules
+    - user.rules
+  tags:
+    - install
+    - config
 
 - name: Allow all traffic from localhost
   community.general.ufw:
@@ -38,10 +191,32 @@
     - install
     - config
 
+
+- name: Deploy SSH application profile
+  ansible.builtin.template:
+    src: templates/ssh-ufw-profile.j2
+    dest: "/etc/ufw/applications.d/ssh"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Reload UFW SSH application profiles
+  ansible.builtin.command: "ufw app update ssh"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags:
+    - install
+    - config
+
 - name: Allow SSH connections - anti lockout
   community.general.ufw:
     rule: allow
-    name: OpenSSH
+    name: SSH
     comment: "ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT"
     src: '{{ item }}'
   loop: "{{ networking_networks.local }}"
@@ -51,15 +226,14 @@
     - install
     - config
 
-- name: Ensure UFW service enabled and started
-  ansible.builtin.systemd:
-    name: ufw
-    state: started
-    enabled: true
+- name: Reload UFW to apply changes
+  ansible.builtin.command: ufw reload
   become: true
+  changed_when: false
   tags:
     - install
     - config
+    - reload
 
 - name: Enable UFW and ensure it is running
   community.general.ufw:
@@ -70,6 +244,17 @@
     - install
     - config
 
+- name: Remove UFW config folder
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "/etc/ufw",   mode: "u=rwx,g=rw,o=" }
+  become: true
+  tags:
+    - never 
+    - uninstall
 
 
 ## VERIFICATIONS & HEALTH CHECKS

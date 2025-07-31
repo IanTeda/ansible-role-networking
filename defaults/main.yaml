@@ -39,7 +39,7 @@ networking_ssh:
   user_access_list: "{{ vault_ssh_user_access_list }}"  # List of users with SSH access
 
 ## OpenVPN Client Configuration
-networking_vpn_client:
+networking_openvpn_client:
   user: 'root'
   group: 'root'
   config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
@@ -53,3 +53,8 @@ networking_nginx:
   sites_available_dir: "/etc/nginx/sites-available"    # Directory for Nginx site configurations
   sites_enabled_dir: "/etc/nginx/sites-enabled"        # Directory for enabled Nginx sites
   sites_location_dir: "/etc/nginx/conf.d"              # Directory for Nginx location blocks
+
+## UFW Configuration
+networking_ufw:
+  user: 'root'
+  group: 'root'

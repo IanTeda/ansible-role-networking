@@ -24,15 +24,6 @@
 
 ---
 
-- name: UFW Restart
-  ansible.builtin.systemd:
-    name: ufw
-    state: restarted
-    enabled: true
-    daemon_reload: true
-  become: true
-
-
 - name: Nginx Restart
   ansible.builtin.systemd:
     name: nginx
@@ -41,9 +32,25 @@
     daemon_reload: true
   become: true
 
+- name: OpenVPN Restart
+  ansible.builtin.systemd:
+    name: openvpn@client
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+
 - name: SSH Restart
   ansible.builtin.systemd:
     name: ssh
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+
+- name: UFW Restart
+  ansible.builtin.systemd:
+    name: ufw
     state: restarted
     enabled: true
     daemon_reload: true
