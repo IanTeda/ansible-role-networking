@@ -1,4 +1,25 @@
-[SSH]
+# ============================================================================
+# SSH UFW Application Profile Template (Ansible managed)
+# ----------------------------------------------------------------------------
+# Managed by Ansible - DO NOT EDIT MANUALLY!
+# Any manual changes will be overwritten on the next Ansible run.
+# Place this file in /etc/ufw/applications.d/ssh for UFW SSH application profiles.
+#
+# Profile:
+#   [SSH] - Secure Shell (custom port supported)
+#
+# Usage:
+#   sudo ufw allow 'SSH'
+#
+# Variables:
+#   ssh_port: The SSH port to allow (set via Ansible)
+#
+# References:
+#   https://wiki.ubuntu.com/UncomplicatedFirewall
+#   https://manpages.debian.org/ufw-framework
+# ============================================================================
+
+[SSH Custom Port]
 title=Secure Shell (SSH)
 description=OpenSSH server
-ports=22/tcp
+ports={{ ssh_port }}/tcp

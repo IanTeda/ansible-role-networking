@@ -24,7 +24,7 @@
 - name: Debian family tasks block
   when: ansible_os_family == "Debian"
   block:
-    - name: Starting the Debian Block
+    - name: Starting the Networking Debian Block
       ansible.builtin.debug:
         msg: "Starting tasks for Debian"
       tags:
@@ -43,7 +43,7 @@
     - name: Install and Configure OpenVPN
       ansible.builtin.include_tasks: openvpn-debian.yaml
       tags:
-        - openvpn
+        - vpn
 
     - name: Install Certbot and Retrieve TLS Certificates
       ansible.builtin.include_tasks: lets-encrypt-debian.yaml
@@ -58,7 +58,7 @@
     - name: Install and Configure Homepage
       ansible.builtin.include_tasks: homepage-debian.yaml  
       tags:
-        - hompeage
+        - homepage
 
 
 ## RedHat family tasks block

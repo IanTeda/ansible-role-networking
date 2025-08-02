@@ -28,7 +28,7 @@ Include /etc/ssh/sshd_config.d/*.conf
 # Port number for SSH daemon to listen on
 # Default: 22 | Current: 22
 # Note: Consider changing to non-standard port for security through obscurity
-Port {{ networking_ssh.listen_port }}
+Port {{ ssh_port }}
 
 # IP protocol family to use (inet=IPv4, inet6=IPv6, any=both)
 # Default: any | Current: inet (IPv4 only)
@@ -38,7 +38,7 @@ AddressFamily inet
 # IP addresses to listen on (0.0.0.0 = all IPv4 interfaces)
 # Default: all interfaces | Current: all IPv4 interfaces
 # Note: For enhanced security, specify particular IP addresses if possible
-ListenAddress {{ networking_ssh.listen_address }}
+ListenAddress {{ ssh_listen_address }}
 
 # Disconnect idle clients after specified time
 # Default: 0 (disabled) | Current: 300 seconds with 3 attempts

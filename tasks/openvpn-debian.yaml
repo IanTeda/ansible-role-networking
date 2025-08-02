@@ -335,7 +335,8 @@
   changed_when: false
   tags:
     - debug
-    - facts
+    - install
+    - config
 
 - name: Set wired network interface as Ansible fact
   ansible.builtin.set_fact:
@@ -343,6 +344,7 @@
   when: wired_interface.stdout != ''
   tags:
     - facts
+    - install
     - config
 
 - name: Display VPN Kill Switch Facts

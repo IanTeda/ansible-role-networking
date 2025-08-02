@@ -55,6 +55,8 @@
     ssh_config_file: "/etc/ssh/sshd_config"
     ssh_systemd_name: "ssh"
     ssh_service_file: "/lib/systemd/system/ssh.service"
+    ssh_port: "{{ networking_ssh.listen_port }}"
+    ssh_listen_address: "{{ networking_ssh.listen_address }}"
   tags:
     - install
     - config
@@ -255,16 +257,38 @@
     - install
     - config
 
+- name: Deploy SSH UFW application profile "/etc/ufw/applications.d/ssh"
+  ansible.builtin.template:
+    src: templates/ssh-ufw-profile.j2
+    dest: /etc/ufw/applications.d/ssh
+    mode: '0644'
+    owner: root
+    group: root
+  become: true
+  tags:
+    - install
+    - config
+
+- name: Reload UFW SSH application profiles
+  ansible.builtin.command: "ufw app update ssh"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags:
+    - install
+    - config
+
 - name: Allow SSH through UFW from local networks at number 1
   ansible.builtin.ufw:
-    insert: 1
     rule: allow
-    name: "OpenSSH"
-    comment: "Allow OpenSSH ({{ networking_ssh.listen_port }}/tcp) from LOCAL NET"
+    name: "SSH Custom Port"
+    comment: "Allow SSH ({{ ssh_port }}/tcp) from LOCAL NET - Anti Lock-Out"
     src: "{{ item }}"
   loop: "{{ networking_networks.local }}"
   become: true
   tags:
+    - install
+    - config
     - firewall
 
 - name: Ensure SSH service is enabled and restarted
