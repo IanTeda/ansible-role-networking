@@ -1,0 +1,32 @@
+# ==========================================================================
+# NGINX UFW Application Profile Template
+# -------------------------------------------------------------------------
+# Managed by Ansible - DO NOT EDIT MANUALLY!
+# Any manual changes will be overwritten on the next Ansible run.
+# Place in /etc/ufw/applications.d/nginx for UFW application profiles.
+#
+# Profiles:
+#   [WWW HTTP]        - HTTP only (port 80)
+#   [WWW HTTPS]       - HTTPS only (port 443)
+#   [WWW HTTP/HTTPS]  - HTTP and HTTPS (ports 80, 443)
+#
+# Usage:
+#   sudo ufw allow 'WWW HTTP'
+#   sudo ufw allow 'WWW HTTPS'
+#   sudo ufw allow 'WWW HTTP/HTTPS'
+# ===========================================================================
+
+[WWW HTTP]
+title=Web Server (HTTP)
+description=Allow incoming HTTP traffic
+ports=80/tcp
+
+[WWW HTTPS]
+title=Web Server (HTTPS)
+description=Allow incoming HTTPS traffic
+ports=443/tcp
+
+[WWW HTTP HTTPS]
+title=Web Server (HTTP/HTTPS)
+description=Allow incoming HTTP and HTTPS traffic
+ports=80,443/tcp

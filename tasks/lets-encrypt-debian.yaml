@@ -33,17 +33,17 @@
 
 - name: Set Let's Encrypt role facts
   ansible.builtin.set_fact:
-    lets_encrypt_user: "{{ networking_lets_encrypt.user }}"
-    lets_encrypt_group: "{{ networking_lets_encrypt.group }}"
-    lets_encrypt_domain: "{{ networking_lets_encrypt.domain }}"
-    lets_encrypt_domain_email: "{{ networking_lets_encrypt.domain_email }}"
-    lets_encrypt_config_dir: "/etc/letsencrypt"
-    lets_encrypt_cloudflare_dns_api_key: "{{ networking_lets_encrypt.cloudflare_dns_api_key }}"
-    lets_encrypt_cloudflare_config: "/etc/letsencrypt/.cloudflare.ini"
-    lets_encrypt_certbot_virtual_enviro: "/opt/certbot"
-    lets_encrypt_nginx_ssl_dir: "/etc/nginx/ssl"
-    lets_encrypt_renew_service: "lets-encrypt-renew"
     lets_encrypt_certbot_binary: "/usr/local/bin/certbot"
+    lets_encrypt_certbot_virtual_enviro: "/opt/certbot"
+    lets_encrypt_cloudflare_config: "/etc/letsencrypt/.cloudflare.ini"
+    lets_encrypt_cloudflare_dns_api_key: "{{ networking_lets_encrypt.cloudflare_dns_api_key }}"
+    lets_encrypt_config_dir: "/etc/letsencrypt"
+    lets_encrypt_domain_email: "{{ networking_lets_encrypt.domain_email }}"
+    lets_encrypt_domain: "{{ networking_lets_encrypt.domain }}"
+    lets_encrypt_group: "{{ networking_lets_encrypt.group }}"
+    lets_encrypt_nginx_tls_dir: "/etc/nginx/tls"
+    lets_encrypt_renew_service: "lets-encrypt-renew"
+    lets_encrypt_user: "{{ networking_lets_encrypt.user }}"
   tags:
     - certbot
     - config
@@ -80,12 +80,17 @@
 - name: Display Let's Encrypt facts for debugging
   ansible.builtin.debug:
     msg:
-      - "Fact -> lets_encrypt_user: {{ lets_encrypt_user }}"
-      - "Fact -> lets_encrypt_group: {{ lets_encrypt_group }}"
-      - "Fact -> lets_encrypt_domain: {{ lets_encrypt_domain }}"
-      - "Fact -> lets_encrypt_domain_email: {{ lets_encrypt_domain_email }}"
-      - "Fact -> lets_encrypt_config_dir: {{ lets_encrypt_config_dir }}"
+      - "Fact -> lets_encrypt_certbot_binary: {{ lets_encrypt_certbot_binary }}"
+      - "Fact -> lets_encrypt_certbot_virtual_enviro: {{ lets_encrypt_certbot_virtual_enviro }}"
       - "Fact -> lets_encrypt_cloudflare_config: {{ lets_encrypt_cloudflare_config }}"
+      - "Fact -> lets_encrypt_cloudflare_dns_api_key: {{ lets_encrypt_cloudflare_dns_api_key }}"
+      - "Fact -> lets_encrypt_config_dir: {{ lets_encrypt_config_dir }}"
+      - "Fact -> lets_encrypt_domain_email: {{ lets_encrypt_domain_email }}"
+      - "Fact -> lets_encrypt_domain: {{ lets_encrypt_domain }}"
+      - "Fact -> lets_encrypt_group: {{ lets_encrypt_group }}"
+      - "Fact -> lets_encrypt_nginx_tls_dir: {{ lets_encrypt_nginx_tls_dir }}"
+      - "Fact -> lets_encrypt_renew_service: {{ lets_encrypt_renew_service }}"
+      - "Fact -> lets_encrypt_user: {{ lets_encrypt_user }}"
   tags:
     - debug
 
@@ -387,10 +392,10 @@
     - nginx
     - tls
 
-- name: Symlink Let's Encrypt certificate to Nginx "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.crt"
+- name: Symlink Let's Encrypt certificate to Nginx "{{ lets_encrypt_nginx_tls_dir }}/{{ networking_nginx.hostname }}.crt"
   ansible.builtin.file:
     src: "/etc/letsencrypt/live/{{ lets_encrypt_domain }}/fullchain.pem"
-    dest: "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.crt"
+    dest: "{{ lets_encrypt_nginx_tls_dir }}/{{ networking_nginx.hostname }}.crt"
     state: link
     force: true
   become: true
@@ -399,10 +404,10 @@
     - nginx
     - tls
 
-- name: Symlink Let's Encrypt private key to Nginx "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.key"
+- name: Symlink Let's Encrypt private key to Nginx "{{ lets_encrypt_nginx_tls_dir }}/{{ networking_nginx.hostname }}.key"
   ansible.builtin.file:
     src: "/etc/letsencrypt/live/{{ lets_encrypt_domain }}/privkey.pem"
-    dest: "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.key"
+    dest: "{{ lets_encrypt_nginx_tls_dir }}/{{ networking_nginx.hostname }}.key"
     state: link
     force: true
   become: true
