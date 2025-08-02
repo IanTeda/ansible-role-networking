@@ -28,21 +28,23 @@ networking_networks:
   lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
   unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
 
-## SSH Configuration
-networking_ssh:
-  user: 'root'
-  group: 'root'
-  listen_address: "0.0.0.0"                             # SSH listenging address
-  listen_port: "22"                                     # SSH listenging port
-  user_access_group: 'ssh-users'                        # Group for SSH access
-  user_access_list: "{{ vault_ssh_user_access_list }}"  # List of users with SSH access
+networking_homepage:
+  user: 'homepage'
+  group: 'homepage'
+  release: 'v1.4.0' # <-- https://github.com/gethomepage/homepage/releases
+  port: '3000'
+  hostname: '{{ ansible_hostname }}'
+  title: '{{ ansible_hostname }} - Homepage'
+  description: 'A server for doing xyz'
+  theme: 'dracula' # Options: light, dark, dracula, etc.
+  allowed_hosts: '{{ ansible_hostname }}, {{ ansible_hostname }}:3000, {{ ansible_fqdn }}, {{ ansible_fqdn }}:3000' # <-- When pasting into host_vars, update to include vault_hostname_address
 
-## OpenVPN Client Configuration
-networking_openvpn_client:
-  user: 'root'
-  group: 'root'
-  config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
-  vpn_server: '{{ vault_vpn_server }}'
+networking_lets_encrypt:
+  user: 'letsencrypt'                                                 # User for Let's Encrypt tasks
+  group: 'letsencrypt'                                                # Group for Let's Encrypt tasks
+  domain: '{{ ansible_fqdn }}'                                        # Domain for the certificate
+  domain_email: '{{ vault_networking_domain_email }}'                 # Email for Let's Encrypt notifications
+  cloudflare_dns_api_key: '{{ vault_networking_cloudflare_token }}'   # Cloudflare DNS API key
 
 ## Nginx Configuration
 networking_nginx:
@@ -52,6 +54,23 @@ networking_nginx:
   sites_available_dir: "/etc/nginx/sites-available"    # Directory for Nginx site configurations
   sites_enabled_dir: "/etc/nginx/sites-enabled"        # Directory for enabled Nginx sites
   sites_location_dir: "/etc/nginx/conf.d"              # Directory for Nginx location blocks
+
+## OpenVPN Client Configuration
+networking_openvpn_client:
+  user: 'root'
+  group: 'root'
+  config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
+  vpn_server: '{{ vault_vpn_server }}'
+
+## SSH Configuration
+networking_ssh:
+  user: 'root'
+  group: 'root'
+  listen_address: "0.0.0.0"                             # SSH listenging address
+  listen_port: "22"                                     # SSH listenging port
+  user_access_group: 'ssh-users'                        # Group for SSH access
+  user_access_list: "{{ vault_ssh_user_access_list }}"  # List of users with SSH access
+
 
 ## UFW Configuration
 networking_ufw:

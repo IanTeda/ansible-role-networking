@@ -1,0 +1,613 @@
+
+# Variables: Define your domain, email, and DNS provider details.
+# Tasks:
+# Install necessary Python libraries.
+# Generate a private key for your ACME account.
+# Register your ACME account with Let's Encrypt.
+# Generate the private key for the wildcard certificate.
+# Create a Certificate Signing Request (CSR).
+# Start the ACME order and get the DNS challenge token.
+# Use a custom script or module to create the DNS TXT record.
+# Wait for the DNS record to propagate.
+# Validate the challenge and finalize the certificate order.
+# Retrieve the signed certificate.
+# Deploy the certificate and private key to the desired location.
+# Clean up the DNS TXT record.
+# Set up a cron job for automatic renewal.
+
+
+# Let's Encrypt Wildcard Certificate for example.com - Automated with Ansible
+# This playbook will:
+#   - Obtain a wildcard HTTPS certificate for *.example.com using DNS challenge
+#   - Deploy the certificate and key to Nginx
+#   - Set up automatic renewal
+
+# https://networkdoodles.com/posts/letsencrypt-part1/
+# https://github.com/certbot/certbot
+# https://certbot.eff.org/instructions?ws=other&os=pip
+
+
+## 00. SET LET'S ENCRYPT ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set Let's Encrypt role facts
+  ansible.builtin.set_fact:
+    lets_encrypt_user: "{{ networking_lets_encrypt.user }}"
+    lets_encrypt_group: "{{ networking_lets_encrypt.group }}"
+    lets_encrypt_domain: "{{ networking_lets_encrypt.domain }}"
+    lets_encrypt_domain_email: "{{ networking_lets_encrypt.domain_email }}"
+    lets_encrypt_config_dir: "/etc/letsencrypt"
+    lets_encrypt_cloudflare_dns_api_key: "{{ networking_lets_encrypt.cloudflare_dns_api_key }}"
+    lets_encrypt_cloudflare_config: "/etc/letsencrypt/.cloudflare.ini"
+    lets_encrypt_certbot_virtual_enviro: "/opt/certbot"
+    lets_encrypt_nginx_ssl_dir: "/etc/nginx/ssl"
+    lets_encrypt_renew_service: "lets-encrypt-renew"
+    lets_encrypt_certbot_binary: "/usr/local/bin/certbot"
+  tags:
+    - certbot
+    - config
+    - directories
+    - healthcheck
+    - group
+    - install
+    - nginx
+    - systemd
+    - tls
+    - uninstall
+    - user
+    - user_group
+    - verify
+
+- name: Display Let's Encrypt variables for debugging
+  ansible.builtin.debug:
+    var: networking_tls_certs
+  tags:
+    - debug
+
+- name: Display domain name variables
+  ansible.builtin.debug:
+    var: ansible_hostname
+  tags:
+    - debug
+
+- name: Display domain name variables
+  ansible.builtin.debug:
+    var: ansible_fqdn
+  tags:
+    - debug
+
+- name: Display Let's Encrypt facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> lets_encrypt_user: {{ lets_encrypt_user }}"
+      - "Fact -> lets_encrypt_group: {{ lets_encrypt_group }}"
+      - "Fact -> lets_encrypt_domain: {{ lets_encrypt_domain }}"
+      - "Fact -> lets_encrypt_domain_email: {{ lets_encrypt_domain_email }}"
+      - "Fact -> lets_encrypt_config_dir: {{ lets_encrypt_config_dir }}"
+      - "Fact -> lets_encrypt_cloudflare_config: {{ lets_encrypt_cloudflare_config }}"
+  tags:
+    - debug
+
+- name: Confirm Let's Encrypt uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Let's Encrypt Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the Let's Encrypt service from this system.
+
+      This will remove:
+      🗑️  Uninstall the apt package
+      🗑️  Delete configuration folder
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags:
+    - never
+    - uninstall
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user choice
+      
+      The lets_encrypt service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags:
+    - never
+    - uninstall
+
+
+
+## 02. SET UP LET'S ENCRYPT USER & CREATE SERVICE DIRECTORIES
+# This section sets up the system user and group to run the service and create 
+# all the directories for the service
+# -----------------------------------------------------------------------------
+
+- name: Ensure Let's Encrypt group {{ lets_encrypt_group }} exists
+  ansible.builtin.group:
+    name: "{{ lets_encrypt_group }}"
+    state: present
+  become: true
+  tags:
+    - user_group
+    - group
+    - install
+
+- name: Create Let's Encrypt system user "{{ lets_encrypt_user }}"
+  ansible.builtin.user:
+    name: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: false
+    comment: "Let's Encrypt Service System Account"
+  become: true
+  tags:
+    - user_group
+    - user
+    - install
+
+- name: Remove Let's Encrypt user "{{ lets_encrypt_user }}"
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.user:
+    name: "{{ lets_encrypt_user }}"
+    state: absent
+    remove: yes
+    force: yes
+  become: true
+  failed_when: false
+  tags:
+    - uninstall
+    - never
+
+- name: Create directories for Let's Encrypt
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ lets_encrypt_config_dir }}", mode: "u=rwx,g=r,o="}
+  become: true
+  tags:
+    - install
+    - config
+    - directories
+
+- name: Remove directories for Let's Encrypt service during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ lets_encrypt_config_dir }}", mode: "u=rwx,g=r,o="}
+  become: true
+  tags:
+    - never 
+    - uninstall
+
+
+
+## 03. DOWNLOAD, INSTALL & VERIFY LET'S ENCRYPT
+# This section installs the Let's Encrypt client (Certbot) and verifies the 
+# installation.
+# -----------------------------------------------------------------------------
+
+- name: Install Let's Encrypt dependencies
+  ansible.builtin.apt:
+    name:
+      - python3 
+      - python3-dev 
+      - python3-venv 
+      - libaugeas-dev 
+      - gcc
+    state: present
+  become: true
+  tags:
+    - install
+    - certbot
+
+- name: Create a Python virtual environment for Certbot
+  ansible.builtin.command: "python3 -m venv {{ lets_encrypt_certbot_virtual_enviro }}"
+  args:
+    creates: "{{ lets_encrypt_certbot_virtual_enviro }}/bin/activate"
+  become: true
+  become_user: "{{ lets_encrypt_user }}"
+  tags:
+    - install
+    - certbot
+
+- name: Upgrade pip to the latest version in the Certbot virtual environment
+  ansible.builtin.pip:
+    name: pip
+    state: latest
+    virtualenv: "{{ lets_encrypt_certbot_virtual_enviro }}"
+    virtualenv_python: python3
+  become: true
+  become_user: "{{ lets_encrypt_user }}"
+  tags:
+    - install
+    - certbot
+
+- name: Install Certbot and plugins in the virtual environment
+  ansible.builtin.pip:
+    name:
+      - certbot
+      - certbot-dns-cloudflare
+    virtualenv: "{{ lets_encrypt_certbot_virtual_enviro }}"
+    virtualenv_python: python3
+    state: latest
+  become: true
+  become_user: "{{ lets_encrypt_user }}"
+  tags:
+    - install
+    - certbot
+
+- name: Ensure certbot home directory is owned by "{{ lets_encrypt_user }}"
+  ansible.builtin.file:
+    path: "{{ lets_encrypt_certbot_virtual_enviro }}"
+    owner: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    recurse: true
+    mode: '0755'
+  become: true
+  tags:
+    - install
+    - certbot
+
+- name: Symlink certbot executable to "{{ lets_encrypt_certbot_binary }}"
+  ansible.builtin.file:
+    src: "{{ lets_encrypt_certbot_virtual_enviro }}/bin/certbot"
+    dest: "{{ lets_encrypt_certbot_binary }}"
+    state: link
+    force: true
+    mode: '0755'
+  become: true
+  tags:
+    - install
+    - certbot
+
+- name: Assert certbot executable is working
+  ansible.builtin.command: "{{ lets_encrypt_certbot_binary }} --version"
+  register: certbot_version
+  changed_when: false
+  failed_when: certbot_version.rc != 0 or ('certbot' not in certbot_version.stdout)
+  tags:
+    - install
+    - certbot
+    - healthcheck
+    - verify
+
+- name: Show certbot version output
+  ansible.builtin.debug:
+    msg: "Certbot version output: {{ certbot_version.stdout }}"
+  tags:
+    - install
+    - certbot
+    - healthcheck
+    - verify
+
+- name: Remove Certbot virtual environment symlink (if any)
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ lets_encrypt_certbot_binary }}"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+- name: Remove Certbot virtual environment directory
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ lets_encrypt_certbot_virtual_enviro }}"
+    state: absent
+  become: true
+  tags:
+    - never
+    - uninstall
+
+
+
+## 04. GENERATE TLS CERTIFICATES & LINK TO NIGINX
+# This section gnerates an ACME account key, registers the account with Let's Encrypt,
+# and generates the necessary TLS certificates.
+# -----------------------------------------------------------------------------
+
+- name: Ensure Let's Encrypt config directory is owned by "{{ lets_encrypt_user }}"
+  ansible.builtin.file:
+    path: "{{ lets_encrypt_config_dir }}"
+    owner: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    recurse: true
+    mode: '0750'
+  become: true
+  tags:
+    - install
+    - config
+    - tls
+
+- name: Deploy Cloudflare configuration file
+  ansible.builtin.template:
+    src: templates/lets-encrypt-cloudflare.ini.j2
+    dest: "{{ lets_encrypt_cloudflare_config }}"
+    owner: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    mode: '0600'
+  tags:
+    - install
+    - config
+    - tls
+
+- name: Ensure letsencrypt logs directory exists
+  ansible.builtin.file:
+    path: "{{ lets_encrypt_config_dir }}/logs"
+    state: directory
+    owner: "{{ lets_encrypt_user }}"
+    group: "{{ lets_encrypt_group }}"
+    mode: '0750'
+  become: true
+  tags:
+    - install
+    - config
+    - tls
+
+- name: Retrieve https wild card certificate from Let's Encrypt
+  ansible.builtin.command: >
+    certbot certonly
+      --non-interactive
+      --agree-tos
+      --email {{ lets_encrypt_domain_email }}
+      --dns-cloudflare
+      --dns-cloudflare-credentials {{ lets_encrypt_cloudflare_config }}
+      --dns-cloudflare-propagation-seconds 60
+      --config-dir {{ lets_encrypt_config_dir }}
+      --work-dir {{ lets_encrypt_config_dir }}
+      --logs-dir {{ lets_encrypt_config_dir }}/logs
+      -d "*.{{ lets_encrypt_domain }}"
+      -d "{{ lets_encrypt_domain }}"
+  register: acme_order
+  become: true
+  become_user: "{{ lets_encrypt_user }}"
+  tags:
+    - install
+    - tls
+
+- name: Add nginx user (www-data) to the Let's Encrypt group so it can read the certificates
+  ansible.builtin.user:
+    name: "www-data"
+    groups: "{{ lets_encrypt_group }}"
+    append: yes
+  become: true
+  tags:
+    - install
+    - nginx
+    - tls
+
+- name: Symlink Let's Encrypt certificate to Nginx "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.crt"
+  ansible.builtin.file:
+    src: "/etc/letsencrypt/live/{{ lets_encrypt_domain }}/fullchain.pem"
+    dest: "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.crt"
+    state: link
+    force: true
+  become: true
+  tags:
+    - install
+    - nginx
+    - tls
+
+- name: Symlink Let's Encrypt private key to Nginx "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.key"
+  ansible.builtin.file:
+    src: "/etc/letsencrypt/live/{{ lets_encrypt_domain }}/privkey.pem"
+    dest: "{{ lets_encrypt_nginx_ssl_dir }}/{{ networking_nginx.hostname }}.key"
+    state: link
+    force: true
+  become: true
+  tags:
+    - install
+    - nginx
+    - tls
+
+- name: Reload Nginx to apply new TLS certificates
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  become: true
+  tags:
+    - install
+    - nginx
+    - tls
+
+- name: Confirm Nginx is using the new TLS certificate
+  ansible.builtin.shell: |
+    openssl s_client \
+      -connect 127.0.0.1:443 \
+      -servername {{ lets_encrypt_domain }} </dev/null 2>/dev/null |\
+        openssl x509 \
+          -noout \
+          -dates \
+          -subject \
+          -issuer
+  register: nginx_cert_check
+  changed_when: false
+  failed_when: nginx_cert_check.rc != 0 or (lets_encrypt_domain not in nginx_cert_check.stdout)
+  tags:
+    - install
+    - verify
+    - nginx
+    - tls
+
+- name: Show Nginx certificate details
+  ansible.builtin.debug:
+    var: nginx_cert_check.stdout
+  tags:
+    - install
+    - verify
+    - nginx
+    - tls
+
+
+## Renew Certificates
+# This section sets up the renewal service and timer for Let's Encrypt certificates
+# ------------------------------------------------------------------------------
+
+- name: Deploy Lets's Encrypt renewal service
+  ansible.builtin.template:
+    src: templates/lets-encrypt-renew.service.j2
+    dest: /lib/systemd/system/{{ lets_encrypt_renew_service }}.service
+    owner: root
+    group: root
+    mode: '0644'
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Verify Lets's Encrypt renewal service is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ lets_encrypt_renew_service }}.service"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags:
+    - install
+    - config
+    - systemd
+    - verify
+
+- name: Enable Lets's Encrypt renewal service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: "{{ lets_encrypt_renew_service }}.service"
+    enabled: true
+    state: started
+  become: true
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Pick a random hour and minute between 01:00 and 04:59 for renewal timer
+  ansible.builtin.set_fact:
+    lets_encrypt_random_renew_time: "{{ '%02d:%02d:00' | format(1 + (9999999 | random(seed=inventory_hostname)) % 4, (9999999 | random(seed=inventory_hostname ~ 'min')) % 60) }}"
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Deploy Lets's Encrypt renewal timer with the random time of "{{ lets_encrypt_random_renew_time }}"
+  ansible.builtin.template:
+    src: templates/lets-encrypt-renew.timer.j2
+    dest: /lib/systemd/system/{{ lets_encrypt_renew_service }}.timer
+    owner: root
+    group: root
+    mode: '0644'
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Enable Lets's Encrypt renewal timer
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: "{{ lets_encrypt_renew_service }}.timer"
+    enabled: true
+    state: started
+  become: true
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Remove Let's Encrypt Systemd services on unintall
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - "/etc/systemd/system/{{ lets_encrypt_renew_service }}.service"
+    - "/etc/systemd/system/{{ lets_encrypt_renew_service }}.timer"
+  tags:
+    - never
+    - uninstall
+
+
+
+## 07. HEALTH CHECKS FOR LET'S ENCRYPT
+# This section runs the healthcheck for the service to confirm it is running
+# as expected
+# -----------------------------------------------------------------------------
+
+- name: Check status of lets-encrypt-renew.service
+  ansible.builtin.systemd:
+    name: "{{ lets_encrypt_renew_service }}.service"
+    enabled: true
+  register: renew_service_status
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
+
+- name: Assert lets-encrypt-renew.service is enabled (oneshot service)
+  ansible.builtin.assert:
+    that:
+      - renew_service_status.status.UnitFileState in ['enabled', 'static']
+    fail_msg: "lets-encrypt-renew.service is not enabled or static! (It is a oneshot service and may be 'static' if only triggered by a timer.)"
+    success_msg: "lets-encrypt-renew.service is enabled or static. (It is a oneshot service and will not be running except during execution.)"
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
+
+- name: Show lets-encrypt-renew.service status
+  ansible.builtin.debug:
+    msg: "lets-encrypt-renew.service UnitFileState: {{ renew_service_status.status.UnitFileState }}"
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
+
+- name: Check status of lets-encrypt-renew.timer
+  ansible.builtin.systemd:
+    name: "{{ lets_encrypt_renew_service }}.timer"
+    enabled: true
+  register: renew_timer_status
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
+
+- name: Assert lets-encrypt-renew.timer is active and running
+  ansible.builtin.assert:
+    that:
+      - renew_timer_status.status.ActiveState == 'active'
+      - renew_timer_status.status.SubState == 'waiting'
+    fail_msg: "lets-encrypt-renew.timer is not active and running!"
+    success_msg: "lets-encrypt-renew.timer is active and running."
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
+
+- name: Show lets-encrypt-renew.timer status
+  ansible.builtin.debug:
+    msg: "lets-encrypt-renew.timer is: {{ renew_timer_status.status.ActiveState }} and {{ renew_timer_status.status.SubState }}"
+  tags:
+    - config
+    - healthcheck
+    - install
+    - systemd
+    - verify
