@@ -45,50 +45,55 @@
 
 # --------------------- [START VPN KILL SWITCH] -------------------------------
 
-# Allow all outgoing traffic through the VPN tunnel interface (tun0)
+##-- Allow all traffic (outgoing and incoming) through the VPN tunnel interface (tun0)
+# This ensures that once the VPN is connected, all traffic can flow through it. This 
+# is the first and most important rule for the kill switch
 -A ufw-before-output -o tun0 -j ACCEPT
+-A ufw-before-input -i tun0 -j ACCEPT
 
-# Allow outgoing traffic to local/private networks (LAN)
+##-- Allow all outgoing traffic to local/private networks (LAN) 
+# This allows the system to communicate normally when the VPN is not connected.
 -A ufw-before-output -d 10.0.0.0/8 -j ACCEPT
 -A ufw-before-output -d 172.16.0.0/12 -j ACCEPT
 -A ufw-before-output -d 192.168.0.0/16 -j ACCEPT
 
-# Allow incoming traffic from local/private networks (LAN)
--A ufw-before-input -s 10.0.0.0/8 -j ACCEPT
--A ufw-before-input -s 172.16.0.0/12 -j ACCEPT
--A ufw-before-input -s 192.168.0.0/16 -j ACCEPT
+##-- Allow DNS quiers to public VPN DNS servers (UDP 53). 
+# This allows the system to resolve DNS queries when tun0 is not up, such as getting
+# the VPN server IPs from the DNS. 
+# NOTE: Update with your VPN providers dns servers
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
 
-# Allow through physical interface, outgoing to VPN client server IPs (resolved in the ansible task) + tcp/udp port
+##-- Allow DHCP client to work (UDP 67/68)
+# This allows the system to obtain an IP address from the DHCP server.
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
+
+##-- Allow through physical interface, outgoing to VPN client server IPs (resolved in the ansible task, add updated through bash script) + tcp/udp port
+
+# [START DYNAMIC VPN SERVER RULES]
+# This is managed by 'vpn-server-update.sh' and dynamically replaced. Text is
+# here to confirm that the script is working correctly.
 {% for ip in vpn_client_server_ips %}
 -A ufw-before-output -o {{ vpn_client_primary_network_interface }} -d {{ ip }} -p tcp --dport {{ vpn_client_server_port }} -j ACCEPT
 -A ufw-before-output -o {{ vpn_client_primary_network_interface }} -d {{ ip }} -p udp --dport {{ vpn_client_server_port }} -j ACCEPT
 {% endfor %}
+# [END DYNAMIC VPN SERVER RULES]
 
-# Allow all incoming traffic from the VPN tunnel interface (tun0)
--A ufw-before-input -i tun0 -j ACCEPT
-
-# Explicitly drop all other incoming traffic on the physical interface
--A ufw-before-input -i {{ vpn_client_primary_network_interface }} -j DROP
-
-# Allow VPN connection establishment on common UDP ports (from eth0)
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1198 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1197 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 1194 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 8080 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --dport 9201 -j ACCEPT
-
-# Allow DNS queries (UDP 53) only to DNS servers
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 10.0.0.242 --dport 53 -j ACCEPT
-
-# Allow DHCP client to work
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp --sport 68 --dport 67 -j ACCEPT
-
-# Drop all other outgoing traffic on {{ vpn_client_primary_network_interface }} (blocks leaks if VPN goes down)
-# Uncomment logging if you want to see dropped packets in the logs
-#-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j LOG --log-prefix "UFW-KILLSWITCH-DROP: "
+#-- Drop all other outgoing traffic on the primary network interface.
+# This prevents all leaks if the VPN is not connected.
+#-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j LOG --log-prefix "UFW-KILLSWITCH-DROP: " #<-- Uncomment this line to log dropped packets
 -A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j DROP
+
+##-- Allow incoming traffic from local/private networks (LAN)
+# This allows the system to communicate normally when the VPN is not connected.
+-A ufw-before-input -s 10.0.0.0/8 -j ACCEPT
+-A ufw-before-input -s 172.16.0.0/12 -j ACCEPT
+-A ufw-before-input -s 192.168.0.0/16 -j ACCEPT
+
+##-- Drop all other outgoing traffic on the physical interface {{ vpn_client_primary_network_interface }} 
+# (blocks leaks if VPN goes down)
+#-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -j LOG --log-prefix "UFW-KILLSWITCH-DROP: " #<-- Uncomment logging if you want to see dropped packets in the logs
+-A ufw-before-input -i {{ vpn_client_primary_network_interface }} -j DROP
 
 # ------------------------ [END VPN KILL SWITCH] -------------------------------
 

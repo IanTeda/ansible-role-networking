@@ -1,9 +1,13 @@
 ---
-# OPENVPN + VPN KILL SWITCH - ANSIBLE TASKS
-# =========================================================================
-#
-# This playbook installs and configures OpenVPN and implements a VPN kill switch
-# using UFW to prevent any internet traffic leakage if the VPN connection drops.
+# =============================================================================
+# OpenVPN + VPN Kill Switch - Ansible Tasks
+# =============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY! ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+# -----------------------------------------------------------------------------
+# File: roles/networking/tasks/vpn-debian.yaml
+# Purpose: Installs, configures, and manages OpenVPN client and UFW-based VPN kill switch.
 #
 # Features:
 #   - Installs OpenVPN and required dependencies
@@ -12,6 +16,8 @@
 #   - Ensures OpenVPN uses the correct authentication file
 #   - Enables and starts the OpenVPN client service
 #   - Configures UFW firewall rules as a kill switch to block all non-VPN traffic
+#   - Manages dynamic VPN server rules and systemd automation
+#   - Provides uninstall and restore tasks
 #
 # Variables required:
 #   - vault_vpn_username: VPN account username (should be stored securely)
@@ -23,12 +29,15 @@
 #   - The kill switch rules allow LAN access and block leaks if the VPN goes down
 #   - Ensure UFW is enabled and properly configured on your system
 #
-# Trouble shooting:
-#   - If the VPN connection fails, check the OpenVPN logs `sudo journalctl -u openvpn@client -f
-#   - Confirm interfaces with `ip a`
-#   - Confirm routing with `ip route`
+# Troubleshooting:
+#   - If the VPN connection fails, check the OpenVPN logs: sudo journalctl -u openvpn@client -f
+#   - Confirm interfaces with: ip a
+#   - Confirm routing with: ip route
+#   - Disable the vpn kill switch: sudo ufw disable
+#   - Update the dynamic ip address for the vpn server: sudo bash /usr/local/sbin/vpn-dynamic-server-update.sh
+# =============================================================================
 
-## 00. SET openvpn ANSIBLE FACTS
+## 00. SET OPENVPN ANSIBLE FACTS
 # This makes it easier to read the ansible tasks
 # -----------------------------------------------------------------------------
 
@@ -41,6 +50,8 @@
     vpn_client_binary_path: "/usr/sbin/openvpn"
     vpn_client_systemd_name: "openvpn@client"
     vpn_client_config_download: "{{ networking_openvpn_client.config_download }}"
+    vpn_client_server_hostname: "{{ networking_openvpn_client.vpn_server }}"
+    vpn_server_dynamic_update_script: "/usr/local/sbin/vpn-dynamic-server-update.sh"
   tags:
     - install
     - config
@@ -65,40 +76,6 @@
       - "Fact -> vpn_client_config_download: {{ vpn_client_config_download }}"
   tags:
     - debug
-
-- name: Confirm OpenVPN uninstallation
-  ansible.builtin.pause:
-    prompt: |
-      ⚠️  WARNING: VPN Client Uninstallation Confirmation ⚠️
-
-      You are about to completely uninstall the VPN Client service from this system.
-      
-      This will remove:
-      🗑️  OpenVPN APT package
-      🗑️  Configuration files: {{ vpn_client_config_dir }}/
-      🗑️  UFW firewall rules: before.conf
-      🗑️  Prometheus scraper config: /etc/prometheus/conf.d/openvpn-scraper.yml
-
-      ❗ This action will stop metrics collection from your VPN Client instance!
-      📊 Historical metrics data in Prometheus will be preserved
-      
-      Are you sure you want to proceed with the uninstallation? (yes/no)
-  register: uninstall_confirmation
-  tags:
-    - never
-    - uninstall
-
-- name: Uninstallation Aborted
-  ansible.builtin.fail:
-    msg: |
-      🛑 Uninstallation aborted by user
-      
-      The openvpn service remains installed and operational.
-      No changes have been made to the system.
-  when: not (uninstall_confirmation.user_input | bool)
-  tags:
-    - never
-    - uninstall
 
 
 
@@ -136,17 +113,6 @@
     - install
     - config
 
-- name: Stop and disable OpenVPN service for uninstallation
-  ansible.builtin.systemd:
-    name: "{{ vpn_client_systemd_name }}"
-    state: stopped
-    enabled: no
-  become: true
-  failed_when: false
-  tags:
-    - uninstall
-    - never
-
 
 
 ## 02. SET UP OPENVPN USER & CREATE SERVICE DIRECTORIES
@@ -171,18 +137,6 @@
   become: true
   tags:
     - install
-
-- name: Uninstall OpenVPN package
-  when: uninstall_confirmation.user_input | bool
-  ansible.builtin.apt:
-    name:
-      - openvpn
-    state: absent
-    update_cache: true
-  become: true
-  tags:
-    - never
-    - uninstall
 
 
 
@@ -236,7 +190,7 @@
 
 - name: Ensure OpenVPN client.conf uses auth-user-pass
   ansible.builtin.lineinfile:
-    path: "{{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn"
+    path: "{{ vpn_client_config_dir }}/configs/{{ vpn_client_server_hostname }}.ovpn"
     regexp: '^auth-user-pass'
     line: 'auth-user-pass {{ vpn_client_config_dir }}/server-auth.txt'
     state: present
@@ -247,7 +201,7 @@
 
 # - name: Ensure OpenVPN config includes AES-256-CBC in data-ciphers
 #   ansible.builtin.lineinfile:
-#     path: "{{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn"
+#     path: "{{ vpn_client_config_dir }}/configs/{{ vpn_client_server_hostname }}.ovpn"
 #     regexp: '^data-ciphers'
 #     line: 'data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:AES-256-CBC'
 #     state: present
@@ -256,9 +210,9 @@
 #     - install
 #     - config
 
-- name: Enable OpenVPN config "{{ networking_openvpn_client.vpn_server }}.ovpn" as /etc/openvpn/client.conf (symlink)
+- name: Enable OpenVPN config "{{ vpn_client_server_hostname }}.ovpn" as /etc/openvpn/client.conf (symlink)
   ansible.builtin.file:
-    src: "{{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn"
+    src: "{{ vpn_client_config_dir }}/configs/{{ vpn_client_server_hostname }}.ovpn"
     dest: "{{ vpn_client_config_file }}"
     state: link
     force: true
@@ -267,18 +221,6 @@
     - install
     - config
 
-- name: Remove OpenVPN config folder
-  when: uninstall_confirmation.user_input | bool
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop:
-    - { path: "{{ vpn_client_config_dir }}",   mode: "u=rwx,g=rw,o=" }
-  become: true
-  tags:
-    - never 
-    - uninstall
-
 
 
 ## 04. SETUP UFW KILL SWITCH
@@ -286,11 +228,18 @@
 # that is not going through the VPN interface (tun0) and allows local network access.
 # -----------------------------------------------------------------------------
 
-- name: Get VPN server hostname from client.conf
+- name: Get VPN server hostname from client.conf for "{{ networking_openvpn_client.vpn_server }}.ovpn"
   ansible.builtin.shell: |
     grep '^remote ' {{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn | awk '{print $2}' | head -n1
   register: vpn_server_hostname
   changed_when: false
+  tags:
+    - install
+    - config
+
+- name: Set VPN server hostname as Ansible fact
+  ansible.builtin.set_fact:
+    vpn_server_hostname_fact: "{{ vpn_server_hostname.stdout }}"
   tags:
     - install
     - config
@@ -372,7 +321,7 @@
 
 - name: Deploy UFW kill switch rules file
   ansible.builtin.template:
-    src: templates/openvpn-kill-switch.rules.j2
+    src: templates/vpn-kill-switch-before.rules.j2
     dest: /etc/ufw/before.rules
     owner: root
     group: root
@@ -399,7 +348,7 @@
 
 - name: Deploy static route for VPN clients
   ansible.builtin.template:
-    src: templates/openvpn-static-unifi-vpn-route.network.j2
+    src: templates/vpn-static-unifi-vpn-route.network.j2
     dest: /etc/systemd/network/10-{{ vpn_client_primary_network_interface }}-static-unifi-vpn-route.network
     owner: root
     group: root
@@ -409,16 +358,6 @@
     - install
     - config
 
-- name: Remove static route for VPN clients
-  when: uninstall_confirmation.user_input | bool
-  ansible.builtin.file:
-    path: /etc/systemd/network/10-{{ vpn_client_primary_network_interface }}-static-unifi-vpn-route.network
-    state: absent
-  become: true
-  tags:
-    - never 
-    - uninstall
-
 - name: Restart systemd-networkd to enable static route
   ansible.builtin.systemd:
     name: systemd-networkd
@@ -427,7 +366,61 @@
   tags:
     - install
     - config
-    - uninstall
+
+- name: Deploy VPN server update script
+  ansible.builtin.template:
+    src: templates/vpn-dynamic-server-update.sh.j2
+    dest: "{{ vpn_server_dynamic_update_script }}"
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+  tags: [install, config]
+
+- name: Deploy VPN server update service
+  ansible.builtin.template:
+    src: templates/vpn-server-update.service.j2
+    dest: /lib/systemd/system/vpn-server-update.service
+    owner: root
+    group: root
+    mode: '0700'
+  tags: [install, config, systemd]
+
+- name: Verify VPN server update service is valid
+  ansible.builtin.command: systemd-analyze verify /lib/systemd/system/vpn-server-update.service
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  become: true
+  tags: [install, config, systemd, verify]
+
+- name: Enable VPN server update service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: vpn-server-update.service
+    enabled: true
+    state: started
+  become: true
+  tags: [install, config, systemd]
+
+- name: Deploy VPN server update timer"
+  ansible.builtin.template:
+    src: templates/vpn-server-update.timer.j2
+    dest: /lib/systemd/system/vpn-server-update.timer
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+  tags: [install, config, systemd]
+
+- name: Enable VPN server update timer
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: vpn-server-update.timer
+    enabled: true
+    state: started
+  become: true
+  tags: [install, config, systemd]
 
 - name: Ensure UFW is enabled
   community.general.ufw:
@@ -447,6 +440,30 @@
     - install
     - config
     - restore
+
+- name: Deploy custom OpenVPN client systemd service unit
+  ansible.builtin.template:
+    src: templates/openvpn-client-systemd.service.j2
+    dest: /lib/systemd/system/openvpn-client@.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - install
+    - config
+    - systemd
+
+- name: Enable and start OpenVPN client service
+  ansible.builtin.systemd:
+    name: openvpn@client
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  become: true
+  tags:
+    - install
+    - config
 
 - name: Enable and restart openvpn@client if not already enabled
   ansible.builtin.service:
@@ -643,3 +660,142 @@
         name: openvpn@client
         state: restarted
         enabled: true
+
+
+
+## 99 Uninstall OpenVPN services
+# This sections uninstalls and removes configuration files
+# -----------------------------------------------------------------------------
+
+- name: Confirm OpenVPN uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: VPN Client Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the VPN Client service from this system.
+      
+      This will remove:
+      🗑️  OpenVPN APT package
+      🗑️  Configuration files: {{ vpn_client_config_dir }}/
+      🗑️  UFW firewall rules: before.conf
+      🗑️  Prometheus scraper config: /etc/prometheus/conf.d/openvpn-scraper.yml
+
+      ❗ This action will stop metrics collection from your VPN Client instance!
+      📊 Historical metrics data in Prometheus will be preserved
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The openvpn service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+- name: Stop and disable OpenVPN service for uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: "{{ vpn_client_systemd_name }}"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Uninstall OpenVPN package
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.apt:
+    name:
+      - openvpn
+    state: absent
+    update_cache: true
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove OpenVPN config folder
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ vpn_client_config_dir }}",   mode: "u=rwx,g=rw,o=" }
+  become: true
+  tags: [never, uninstall]
+
+- name: Stop and disable vpn-server-update.timer during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: vpn-server-update.timer
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  become: true
+  tags: [never, uninstall]
+
+- name: Stop and disable vpn-server-update.service during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: vpn-server-update.service
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove vpn-server-update.timer unit file during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /lib/systemd/system/vpn-server-update.timer
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove vpn-server-update.service unit file during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /lib/systemd/system/vpn-server-update.service
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove vpn-server-update bash script during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /usr/local/sbin/vpn-dynamic-server-update.sh
+    state: absent
+  become: true
+  tags: [never, unisntall]
+
+- name: Restore original UFW before.rules from backup during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules.orig
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+    remote_src: true
+    force: true
+  become: true
+  tags: [never, uninstall, restor]
+
+- name: Remove static route for VPN clients
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /etc/systemd/network/10-{{ vpn_client_primary_network_interface }}-static-unifi-vpn-route.network
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Restart systemd-networkd to enable static route
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+  become: true
+  tags: [never, uninstall]

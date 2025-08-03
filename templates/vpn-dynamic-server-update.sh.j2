@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Update OpenVPN Kill Switch to allow primary interface out to PIA server (dynamic IP)
+# This script should be run as root or with sudo
+
+VPN_HOSTNAME="{{ vpn_server_hostname_fact }}"               # The hostname of your VPN server (e.g., us-east.privateinternetaccess.com)           
+VPN_PORT="{{ vpn_client_server_port }}"                       # Set the PIA server port
+VPN_INTERFACE="{{ vpn_client_primary_network_interface }}"    # Your primary network interface (e.g., eth0, enp3s0)
+
+# 1. Resolve all current IPs for the PIA server
+VPN_IPS=$(dig +short "$VPN_HOSTNAME" | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
+
+# 2. If no IPs are resolved, exit with an error
+if [[ -z "$VPN_IPS" ]]; then
+  echo "Could not resolve IPs for $VPN_HOSTNAME"
+  exit 1
+fi
+
+# 3. Create a temporary file to hold the UFW rules
+TMP_SNIPPET=$(mktemp)
+# Add a timestamp comment at the top of the snippet
+{
+  echo "# Updated by vpn-dynamic-server-update.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ') UTC"
+  for proto in tcp udp; do
+    for ip in $VPN_IPS; do
+      echo "-A ufw-before-output -o $VPN_INTERFACE -d $ip -p $proto --dport $VPN_PORT -j ACCEPT"
+    done
+  done
+} > "$TMP_SNIPPET"
+
+# Backup the current before.rules file
+cp /etc/ufw/before.rules /etc/ufw/before.rules.bak.$(date +%s)
+
+# Replace the section in before.rules
+# This uses awk to insert the new rules between the START and END markers
+awk '
+  /# \[START DYNAMIC VPN SERVER RULES\]/ {print; system("cat '"$TMP_SNIPPET"'"); skip=1; next}
+  /# \[END DYNAMIC VPN SERVER RULES\]/ {skip=0}
+  skip==0 {print}
+' /etc/ufw/before.rules > /etc/ufw/before.rules.new
+
+# Move the new rules file to replace the old one
+# This ensures that the new rules are applied correctly 
+mv -f /etc/ufw/before.rules.new /etc/ufw/before.rules
+
+# Clean up the temporary file
+rm "$TMP_SNIPPET"
+
+ufw reload
+
+echo "UFW rules updated for VPN server $VPN_HOSTNAME ($VPN_IPS) on $VPN_INTERFACE:$VPN_PORT"
