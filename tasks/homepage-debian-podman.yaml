@@ -1,0 +1,366 @@
+
+
+# ============================================================================
+# Homepage (gethomepage.dev) - Podman Rootless Deployment (Debian)
+# ============================================================================
+# This playbook installs and runs Homepage (https://gethomepage.dev/) as a
+# rootless Podman container, managed by a user-level systemd service.
+#
+# Requirements:
+#   - Podman installed and configured for rootless use
+#   - Subuid/subgid mappings for the target user
+#   - The user must be able to run systemd user services
+#   - Ansible collection containers.podman installed
+#
+# Variables required:
+#   homepage_podman_user: The user to run the container as (should match your rootless Podman user)
+#   homepage_data_dir: Directory on host for Homepage config/data (e.g. /home/{{ homepage_podman_user }}/homepage)
+#   homepage_port: Host port to expose Homepage UI (default: 3000)
+# ============================================================================
+
+## 00. SET HOMEPAGE ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set Homepage facts
+  ansible.builtin.set_fact:
+    homepage_user: "{{ networking_homepage.user }}"
+    homepage_group: "{{ networking_homepage.group }}"
+    homepage_release: "{{ networking_homepage.release }}"
+    homepage_port: "{{ networking_homepage.port }}"
+    homepage_home_dir: "/opt/{{ networking_homepage.user }}"
+    homepage_config_dir: "/etc/{{ homepage.user }}/config"
+    homepage_assets_dir: "/etc/{{ homepage.user }}/assets"
+    homepage_icons_dir: "/etc/{{ homepage.user }}/icons"
+    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts }}"
+    homepage_container_name: "{{ networking_homepage.user }}"
+  tags: [install, config, firewall, verify, healthcheck, uninstall]
+
+- name: Display Homepage variables for debugging
+  ansible.builtin.debug:
+    var: networking_homepage
+  tags: [debug]
+
+# - name: Display Homepage facts for debugging
+#   ansible.builtin.debug:
+#     msg:
+#       - "Fact -> homepage_user: {{ homepage.user }}"
+#       - "Fact -> homepage_group: {{ homepage.group }}"
+#       - "Fact -> homepage_home_dir: {{ homepage_home_dir }}"
+#       - "Fact -> homepage_config_dir: {{ homepage_config_dir }}"
+#       - "Fact -> homepage_config_file: {{ homepage_config_file }}"
+#       - "Fact -> homepage_data_dir: {{ homepage_data_dir }}"
+#       - "Fact -> homepage_systemd_name: {{ homepage_systemd_name }}"
+#       - "Fact -> homepage_download_url: {{ homepage_download_url }}"
+#   tags: [debug]
+
+
+
+## 02. CREATE HOMEPAGE CONFIG DIRECTORIES
+# This section sets up the system user and group to run the service and create 
+# all the directories for the service
+# -----------------------------------------------------------------------------
+
+- name: Ensure {{ homepage_group }} group exists
+  ansible.builtin.group:
+    name: "{{ homepage_group }}"
+    state: present
+  become: true
+  tags: [install, user_group]
+
+- name: Create Homepage system user "{{ homepage_user }}"
+  ansible.builtin.user:
+    name: "{{ homepage_user }}"
+    group: "{{ homepage_group }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: true
+    home: "{{ homepage_home_dir }}"
+    comment: "Homepage Service System Account"
+  become: true
+  tags: [user_group, install]
+
+- name: Enable lingering for homepage user (allow user services to run without login)
+  ansible.builtin.command: loginctl enable-linger {{ homepage_user }}
+  become: true
+  changed_when: true
+  tags: [install, user_group]
+
+- name: Ensure subuid mapping exists for Podman rootless Homepage user "{{ homepage_user }}"
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    line: "{{ homepage_user }}:100000:65536"
+    create: yes
+    state: present
+    regexp: "^{{ homepage_user }}:"
+  become: true
+  tags: [install, user_group, rootless]
+
+- name: Ensure subgid mapping exists for Podman rootless Homepage user "{{ homepage_user }}"
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    line: "{{ homepage_user }}:100000:65536"
+    create: yes
+    state: present
+    regexp: "^{{ homepage_user }}:"
+  become: true
+  tags: [install, user_group, rootless]
+
+- name: Create directories for Homepage service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ homepage_user }}"
+    group: "{{ homepage_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ homepage_config_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ homepage_assets_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ homepage_icons_dir }}", mode: "u=rwx,g=rw,o="}
+  become: true
+  tags: [install, directories]
+
+
+## 03. INSTALL AND RUN HOMEPAGE WITH PODMAN
+# This section installs Homepage using Podman as a rootless container.
+# It pulls the latest image, creates a container, and sets up systemd for user-level
+# management.
+# -----------------------------------------------------------------------------
+
+- name: "Pull Homepage image with Podman release: {{ homepage_release }}"
+  containers.podman.podman_image:
+    name: ghcr.io/gethomepage/homepage:{{ homepage_release }}
+    state: present
+    username: null
+    password: null
+  become: true
+  become_user: "{{ homepage_user }}"
+  tags: [install]
+
+- name: Get homepage_user UID
+  ansible.builtin.user:
+    name: "{{ homepage_user }}"
+  register: homepage_user_info
+  tags: [install]
+
+- name: Display "homepage_user_info" for debugging
+  ansible.builtin.debug:
+    var: homepage_user_info
+  tags: [debug]
+
+- name: Create and run Homepage container with Podman
+  containers.podman.podman_container:
+    name: "{{ homepage_container_name }}"
+    image: ghcr.io/gethomepage/homepage:{{ homepage_release }}
+    state: started
+    recreate: true
+    restart_policy: unless-stopped
+    userns_mode: "keep-id:uid={{ homepage_user_info.uid }},gid={{ homepage_user_info.group }}"
+    user: "0:0"
+    publish:
+      - "{{ homepage_port }}:3000"
+    volume:
+      - "{{ homepage_config_dir }}:/app/config:Z"
+      - "{{ homepage_assets_dir }}:/app/assets:Z"
+      - "{{ homepage_icons_dir }}:/app/icons:Z"
+    env:
+      PUID: "{{ homepage_user_info.uid }}"
+      PGID: "{{ homepage_user_info.group }}"
+      TZ: "{{ ansible_date_time.tz }}"
+      HOMEPAGE_ALLOWED_HOSTS: "{{ homepage_allowed_hosts }}"
+  become: true
+  become_user: "{{ homepage_user }}"
+  tags: [install]
+
+# - name: Generate systemd unit for Homepage container
+#   containers.podman.podman_generate_systemd:
+#     name: "{{ homepage_container_name }}"
+#     dest: "{{ homepage_home_dir }}/.config/systemd/user"
+#     restart_policy: always
+#     new: true
+#     container_prefix: ""
+#   become: true
+#   become_user: "{{ homepage_user }}"
+#   tags: [install]
+
+# - name: Enable and start Homepage systemd service
+#   ansible.builtin.systemd:
+#     name: "{{ homepage_container_name }}"
+#     enabled: true
+#     state: started
+#     daemon_reload: true
+#     scope: user
+#   become: true
+#   become_user: "{{ homepage_user }}"
+#   environment:
+#     XDG_RUNTIME_DIR: "/run/user/{{ homepage_user_info.uid }}"
+#   tags: [install]
+
+
+
+## 06. SETUP FIREWALL FOR HOMEPAGE
+# This section sets up the firewall rules to allow the service traffic
+# -----------------------------------------------------------------------------
+
+- name: Deploy Homepage UFW application profile
+  ansible.builtin.template:
+    src: templates/homepage-ufw-profile.j2
+    dest: /etc/ufw/applications.d/{{ homepage_container_name }}
+    mode: '0644'
+    owner: root
+    group: root
+  become: true
+  tags: [install, config, firewall]
+
+- name: Reload UFW Homepage application profiles
+  ansible.builtin.command: "ufw app update {{ homepage_container_name }}"
+  changed_when: false
+  failed_when: false
+  become: true
+  tags: [install, config, firewall]
+
+- name: Allow Homepage application profile through firewall
+  ansible.builtin.ufw:
+    rule: allow
+    name: "Homepage"
+    comment: "ALLOW Homepage ({{ homepage_port }}/tcp) for LOCAL NET"
+    src: '{{ item }}'
+  loop: "{{ networking_networks.local }}"
+  become: true
+  tags: [install, config, firewall]
+
+- name: Confirm Homepage UFW profile is allowed for local networks
+  ansible.builtin.command: "ufw status numbered"
+  register: ufw_status
+  changed_when: false
+  tags: [install, config, firewall, verify, healthcheck]
+
+- name: Assert Homepage UFW rule exists for each local network
+  ansible.builtin.assert:
+    that:
+      - "'Homepage' in ufw_status.stdout and item in ufw_status.stdout"
+    fail_msg: "Homepage UFW rule is NOT present for {{ item }}"
+    success_msg: "Homepage UFW rule is present for {{ item }}"
+  loop: "{{ networking_networks.local }}"
+  tags: [install, config, firewall, verify, healthcheck]
+
+
+
+## 90. UNINSTALL HOMEPAGE
+# This section uninstalls Homepage and cleans up all related resources.
+# -----------------------------------------------------------------------------
+
+- name: Confirm Homepage uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: Homepage Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the Homepage service from this system.
+      
+      This will remove:
+      🗑️  Homepage user and group: {{ homepage_user }}:{{ homepage_group }}
+      🗑️  Homepage directorys: {{ homepage_user }}:{{ homepage_group }}
+      🗑️  Configuration files: {{ homepage_config_dir }}/
+      🗑️  UFW firewall rules
+      
+      Are you sure you want to proceed with the uninstallation? (yes/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The Nginx service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+- name: Get homepage_user UID
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.user:
+    name: "{{ homepage_user }}"
+  register: homepage_user_info
+  tags: [never, uninstall]
+
+- name: Remove systemd unit for "{{ homepage_container_name }}" (if exists)
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ homepage_home_dir }}/.config/systemd/user/container-{{ homepage_container_name }}.service"
+    state: absent
+  become: true
+  become_user: "{{ homepage_user }}"
+  tags: [never, uninstall]
+
+- name: Reload systemd user daemon for homepage user after cleanup
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.command: systemctl --user daemon-reload
+  become: false
+  become_user: "{{ homepage_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ homepage_user_info.uid }}"
+  tags: [never, uninstall]
+
+- name: Stop and remove all "{{ homepage_container_name }}" Podman containers (if any)
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.shell: |
+    podman ps -a --format '{{ "{{.ID}}" }} {{ "{{.Names}}" }}' | awk '$2 == "{{ homepage_container_name }}" {print $1}' | xargs -r podman rm -f
+  become: true
+  become_user: "{{ homepage_user }}"
+  ignore_errors: true
+  tags: [never, uninstall]
+
+- name: Remove Homepage user "{{ homepage_user }}" during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.user:
+    name: "{{ homepage_user }}"
+    state: absent
+    remove: yes
+    force: yes
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove Homepage group "{{ homepage_group }}" during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.group:
+    name: "{{ homepage_group }}"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove directories for Homepage service during uninstallation
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ homepage_config_dir }}", mode: "u=rwx,g=rw,o="}
+    - { path: "{{ homepage_home_dir }}", mode: "u=rwx,g=rw,o="}
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove Homepage UFW rules for each local network
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.command: >
+    ufw delete allow from {{ item }} to any app Homepage
+  loop: "{{ networking_networks.local }}"
+  become: true
+  ignore_errors: true
+  tags: [never, uninstall]
+
+- name: Remove Homepage UFW application profile
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ homepage_container_name }}"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Reload UFW after removing Homepage rules and profile
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.command: ufw reload
+  become: true
+  changed_when: false
+  tags: [never, uninstall]

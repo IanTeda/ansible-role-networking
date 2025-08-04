@@ -40,8 +40,8 @@
       tags:
         - ufw
 
-    - name: Install and Configure OpenVPN
-      ansible.builtin.include_tasks: openvpn-debian.yaml
+    - name: Install and Configure VPN
+      ansible.builtin.include_tasks: vpn-debian.yaml
       tags:
         - vpn
 
@@ -56,7 +56,7 @@
         - nginx
 
     - name: Install and Configure Homepage
-      ansible.builtin.include_tasks: homepage-debian.yaml  
+      ansible.builtin.include_tasks: homepage-debian.yaml
       tags:
         - homepage
 

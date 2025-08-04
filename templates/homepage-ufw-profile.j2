@@ -1,0 +1,19 @@
+# ============================================================================
+# Homepage UFW Profile (Ansible managed)
+# ----------------------------------------------------------------------------
+# This file defines a UFW application profile for the Homepage dashboard
+# container. It is managed by Ansible and will be overwritten on deploy.
+#
+# Usage:
+#   - Used by UFW to allow traffic to the Homepage dashboard port
+#   - The port is set dynamically via the homepage_port variable
+#
+# References:
+#   - https://gethomepage.dev/
+#   - https://manpages.debian.org/ufw-framework
+# ============================================================================
+
+[Homepage]
+title=Homepage Dashboard
+description=Homepage Dashboard - A modern, fully static, fast, secure fully proxied, highly customizable application dashboard
+ports={{ homepage_port }}/tcp
