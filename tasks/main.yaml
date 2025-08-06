@@ -65,6 +65,12 @@
       tags:
         - arti
 
+    - name: Install and Configure I2PD
+      ansible.builtin.include_tasks: i2pd-debian.yaml
+      tags:
+        - i2pd
+
+
 
 ## RedHat family tasks block
 # ------------------------------------------------------------------------------

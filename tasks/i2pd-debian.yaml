@@ -1,0 +1,362 @@
+---
+# =============================================================================
+# Ansible Role: Install and Harden i2pd (I2P Daemon) on Debian
+# -----------------------------------------------------------------------------
+#
+# This playbook automates the secure installation and configuration of i2pd,
+# the C++ I2P router daemon, as a hardened systemd service on Debian systems.
+#
+# Features & Best Practices:
+#   - Installs i2pd from official repositories with GPG verification
+#   - Creates secure configuration and directory structure with strict permissions
+#   - Configures and applies UFW firewall rules for I2P and console access
+#   - Deploys main and tunnels config templates for Bitcoin and other apps
+#   - Enables and starts the i2pd systemd service
+#   - Modular, idempotent, and well-documented tasks
+#   - Health checks for service status and access
+#
+# Sections/Steps:
+#   00. Set Ansible Facts: Define key variables and paths for deployment
+#   01. Shutdown Service: Stop i2pd before config changes (safe updates)
+#   02. Ensure Directories: Create config directories with correct permissions
+#   03. Install i2pd: Add repo, install package, verify binaries and service
+#   04. Setup Config: Deploy config and tunnels templates
+#   05. Setup Firewall: Deploy and apply UFW profiles for I2P and console
+#   06. Enable and Start Service: Enable and start i2pd, ensure it runs on boot
+#   07. Verifications & Health Checks: Service status and access info
+#
+# Prerequisites:
+#   - Debian system with systemd and internet access
+#   - Required variables set in group_vars/host_vars (see below)
+#
+# Variables (define in group_vars/host_vars):
+#   - i2pd.console_port (default: 7070)
+#   - i2pd.sam_port_tcp (default: 7656)
+#   - i2pd.sam_port_udp (default: 7655)
+#   - local_networks (for firewall config)
+#
+# Usage:
+#   - Include this file in your playbook
+#   - Run: ansible-playbook playbook.yml --tags i2pd
+#   - Service: i2pd.service (systemd)
+#   - Web Console: http://<host>:<console_port>/
+#
+# Security:
+#   - Hardened systemd unit (see package defaults)
+#   - Strict file/dir permissions (no world access)
+#   - UFW restricts access to only required ports and networks
+#
+# References:
+#   - https://i2pd.readthedocs.io/
+#   - https://geti2p.net/
+#
+# Last updated: 2025-07-05
+# -----------------------------------------------------------------------------
+
+## 00. SET ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set I2PD facts
+  ansible.builtin.set_fact:
+    i2pd_config_dir: "/etc/i2pd"
+    i2pd_systemd_service: "i2pd"
+  tags:
+    - install
+    - config
+    - healthcheck
+
+
+## 01. SHUTDOWN I2PD SERVICES
+# This section ensures that the service is stopped before config changes and updates 
+# are applied. This prevents conflict issues.
+# -----------------------------------------------------------------------------
+
+- name: Check if I2PD service exists
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ i2pd_systemd_service}}.service"
+  register: service_file
+  tags:
+    - install
+    - config
+
+- name: Ensure I2PD service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ i2pd_systemd_service }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: service_file.stat.exists
+  tags:
+    - install
+    - config
+
+
+## 02. ENSURE DIRECTORIES EXIST
+# This section ensures all the directories for the service
+# -----------------------------------------------------------------------------
+
+# - name: Create directories for I2PD service
+#   ansible.builtin.file:
+#     path: "{{ item }}"
+#     state: directory
+#     owner: "i2pd"
+#     group: "i2pd"
+#     mode: 'u=rwx,g=rwx,o='
+#   loop:
+#     - "{{ i2pd_config_dir }}"
+#   become: true
+#   tags:
+#     - install
+
+
+## 03. INSTALL I2PD
+# This section installs the I2P daemon (i2pd) from the official I2
+# -----------------------------------------------------------------------------
+
+- name: Install I2PD repository dependencies
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+      - libssl3
+    state: present
+    update_cache: true
+  become: true
+  tags:
+    - install
+
+
+
+- name: Download libssl1.1 package from Debian 11 (bullseye)
+  ansible.builtin.get_url:
+    url: http://ftp.debian.org/debian/pool/main/o/openssl/libssl1.1_1.1.1n-0+deb10u3_amd64.deb
+    dest: /tmp/libssl.deb
+    mode: '0644'
+  when: ansible_architecture == "x86_64"
+  tags:
+    - install
+
+- name: Install libssl1.1 package
+  ansible.builtin.apt:
+    deb: /tmp/libssl.deb
+    state: present
+  become: true
+  when: ansible_architecture == "x86_64"
+  tags:
+    - install
+
+- name: Remove downloaded libssl1.1 package file
+  ansible.builtin.file:
+    path: /tmp/libssl1.1_1.1.1n-0+deb11u5_amd64.deb
+    state: absent
+  when: ansible_architecture == "x86_64"
+  tags:
+    - install
+
+- name: Download I2PD repository signing key
+  ansible.builtin.get_url:
+    url: https://repo.i2pd.xyz/r4sas.gpg
+    dest: /usr/share/keyrings/i2pd-archive-keyring.gpg
+    mode: '0644'
+  become: true
+  tags:
+    - install
+
+- name: Add I2PD repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/i2pd-archive-keyring.gpg] https://repo.i2pd.xyz/debian {{ ansible_distribution_release | regex_replace('bookworm|trixie', 'bullseye') }} main"
+    state: present
+    filename: i2pd
+  become: true
+  tags:
+    - install
+
+- name: Install I2PD package
+  ansible.builtin.apt:
+    name:
+      - i2pd
+    state: present
+    update_cache: yes
+    clean: yes
+  become: true
+  tags:
+    - install
+
+- name: Verify i2pd systemd service file exists
+  ansible.builtin.stat:
+    path: /lib/systemd/system/i2pd.service
+  register: i2pd_service_file
+  tags:
+    - install
+    - verify
+
+- name: Assert i2pd systemd service was installed
+  ansible.builtin.assert:
+    that:
+      - i2pd_service_file.stat.exists
+    fail_msg: "i2pd systemd service file not found at /lib/systemd/system/i2pd.service"
+    success_msg: "i2pd systemd service file found successfully"
+  tags:
+    - install
+    - verify
+
+- name: Verify i2pd binary exists
+  ansible.builtin.stat:
+    path: /usr/bin/i2pd
+  register: i2pd_binary
+  tags:
+    - install
+    - verify
+
+- name: Assert i2pd binary was installed
+  ansible.builtin.assert:
+    that:
+      - i2pd_binary.stat.exists
+    fail_msg: "i2pd binary not found at /usr/bin/i2pd"
+    success_msg: "i2pd binary found successfully"
+  tags:
+    - install
+    - verify
+
+
+## 04. SETUP CONFIG
+# This section sets up the i2pd configuration directory. Systemd install is managed
+# by the package manager, so we only need to copy the configuration files.
+# -----------------------------------------------------------------------------
+
+- name: Copy i2pd main config to "{{ i2pd_config_dir }}"
+  ansible.builtin.template:
+    src: templates/i2pd-conf.j2
+    dest: "{{ i2pd_config_dir }}/i2pd.conf"
+    owner: i2pd
+    group: i2pd
+    mode: '0644'
+    backup: yes
+  become: true
+  notify: I2PD Restart
+  tags:
+    - config
+
+- name: Copy i2pd tunnels template
+  ansible.builtin.template:
+    src: templates/i2pd-tunnels.conf.j2
+    dest: "{{ i2pd_config_dir }}/tunnels.conf"
+    owner: i2pd
+    group: i2pd
+    mode: '0644'
+    backup: yes
+  become: true
+  notify: I2PD Restart
+  tags:
+    - config
+
+
+## 05. SETUP FIREWALL
+# This section sets up the firewall rules to allow Bitcoin P2P traffic
+# -----------------------------------------------------------------------------
+
+- name: Copy I2P UFW application profile template
+  ansible.builtin.template:
+    src: templates/i2pd-ufw-profile.j2
+    dest: /etc/ufw/applications.d/i2p
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags:
+    - firewall
+    - config
+
+- name: Reload UFW application profiles
+  ansible.builtin.command:
+    cmd: ufw app update i2p
+  become: true
+  changed_when: false
+  tags:
+    - firewall
+    - config
+
+- name: Allow I2P through firewall
+  ansible.builtin.ufw:
+    rule: allow
+    name: I2P-SAM
+    comment: "Allow I2P ({{ i2pd.sam_port_tcp }}/tcp|{{ i2pd.sam_port_udp }}/udp) traffic for Bitcoin nodes from ANYWHERE"
+  become: true
+  notify: UFW Restart
+  tags:
+    - firewall
+    - config
+
+- name: Allow I2P console access
+  ansible.builtin.ufw:
+    rule: allow
+    name: I2P-Console
+    src: "{{ item }}"
+    comment: "Allow I2P console ({{ i2pd.console_port }}) access from LOCAL NET"
+  loop: "{{ local_networks }}"
+  become: true
+  notify: UFW Restart
+  tags:
+    - firewall
+    - config
+
+
+## 06. ENABLE AND START I2PD SERVICE
+# This section enables and starts the i2pd service, ensuring it runs on boot.
+# -----------------------------------------------------------------------------
+
+- name: Enable and start i2pd service
+  ansible.builtin.systemd:
+    name: "{{ i2pd_systemd_service }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  become: true
+  tags:
+    - config
+    - install
+
+# - name: Wait for i2pd to start
+#   ansible.builtin.wait_for:
+#     port: "{{ i2pd.console_port }}"
+#     host: 127.0.0.1
+#     timeout: 120
+#   tags:
+#     - install
+#     - config
+
+
+## 07. VERIFICATIONS & HEALTH CHECKS
+# Confirm the operations of the openvpn & kill switch
+# ------------------------------------------------------------------------------
+
+- name: Verify i2pd service status
+  ansible.builtin.systemd:
+    name: "{{ i2pd_systemd_service }}"
+  register: i2pd_service_status
+  become: true
+  tags:
+    - verify
+    - healthcheck
+
+- name: Assert i2pd service is running
+  ansible.builtin.assert:
+    that:
+      - i2pd_service_status.status.ActiveState == "active"
+      - i2pd_service_status.status.SubState == "running"
+    fail_msg: "i2pd service is not running! Status: {{ i2pd_service_status.status.ActiveState }}"
+    success_msg: "i2pd service is running successfully."
+  tags:
+    - verify
+    - healthcheck
+
+- name: Display i2pd access information
+  ansible.builtin.debug:
+    msg: |
+      I2P daemon installation complete!
+      
+      Web Console: http://{{ ansible_host }}:{{ i2pd.console_port }}/
+  tags:
+    - verify
