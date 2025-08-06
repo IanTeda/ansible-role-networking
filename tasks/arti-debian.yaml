@@ -341,7 +341,13 @@
     group: "{{ arti_group }}"
     mode: '0644'
   become: true
-  notify: Prometheus Restart
+  tags: [install, config, monitoring]
+
+- name: Reload Prometheus Daemon
+  ansible.builtin.systemd:
+    name: "{{ monitoring_prometheus.user }}"
+    state: restarted
+  become: true
   tags: [install, config, monitoring]
 
 - name: Verify Arti Prometheus scraper configuration files are valid
