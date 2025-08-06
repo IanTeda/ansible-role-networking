@@ -1,0 +1,150 @@
+# ------------------------------------------------------------------------------
+# ⚠️  WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!
+# Any manual changes will be overwritten on the next Ansible run.
+# ------------------------------------------------------------------------------
+#
+# Arti Systemd Service Unit File
+# ------------------------------------------------------------------------------
+#
+# This systemd service file configures Arti to run as a system service,
+# providing Tor client functionality for Bitcoin Knots and other applications.
+#
+# Features:
+#   - SOCKS5 proxy for Tor network access
+#   - Secure privilege separation
+#   - Automatic restart on failure
+#   - Comprehensive security hardening
+#   - Systemd journal logging
+#
+# Configuration:
+#   - Config file: {{ arti_config_dir }}/arti.toml
+#   - Data directory: {{ arti_data_dir }}
+#   - User: {{ arti_user }}
+#   - Working directory: {{ arti_home_dir }}
+#   - Binary location: /usr/local/bin/arti
+#   - Logs: sudo journalctl -u {{ arti_user }} -f
+#
+# Usage:
+#   systemctl enable {{ arti_user }}    # Enable on boot
+#   systemctl start {{ arti_user }}     # Start service
+#   systemctl status {{ arti_user }}    # Check status
+#   systemctl stop {{ arti_user }}      # Stop service
+#
+# Security Notes:
+#   - Arti runs with limited privileges as {{ arti_user }}:{{ arti_group }}
+#   - Network namespace isolation enabled
+#   - Memory protection and syscall filtering active
+#
+# Dependencies:
+#   - Requires network.target
+#
+# References:
+#   - https://gitlab.torproject.org/tpo/core/arti
+#   - https://gitlab.torproject.org/tpo/core/arti/-/blob/main/doc/
+#
+# Last updated: 2025-07-14
+# ------------------------------------------------------------------------------
+
+[Unit]
+Description=Arti (Tor client) service
+Documentation=https://gitlab.torproject.org/tpo/core/arti
+
+
+# Service Dependencies
+######################
+# Wait for tun0 to be up before starting
+After=sys-subsystem-net-devices-tun0.device network-online.target
+Requires=sys-subsystem-net-devices-tun0.device
+BindsTo=sys-subsystem-net-devices-tun0.device
+
+# Soft dependency - ensure network is fully operational before starting
+Wants=network-online.target
+
+[Service]
+
+# Environment variables
+#Environment=RUST_BACKTRACE=1
+
+ExecStart=/usr/local/bin/arti proxy --config {{ arti_config_file }}
+
+
+# Process management
+####################
+
+Type=simple
+
+Restart=on-failure
+RestartSec=10
+
+
+# Directory creation and permissions
+####################################
+
+# Run the service as {{ arti_user }}:{{ arti_group }}
+User={{ arti_user }}
+Group={{ arti_group }}
+
+# Set permissions for the runtime directory
+# /run/{{ arti_user }}
+RuntimeDirectory={{ arti_user }}
+RuntimeDirectoryMode=0750
+
+# Set read only paths for the service process and all its children
+ReadOnlyPaths={{ arti_config_dir }}
+
+# Set read write paths for the service process and all its children
+ReadWritePaths={{ arti_data_dir }} {{ arti_home_dir }}
+
+
+# Logging to systemd
+####################
+
+# Log to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ arti_user }}
+# Environment=RUST_BACKTRACE=full
+
+
+# Hardening measures
+####################
+
+
+# Provide a private /tmp and /var/tmp.
+PrivateTmp=true
+
+# Mount /usr, /boot/ and /etc read-only for the process.
+ProtectSystem=full
+
+# Deny access to /home, /root and /run/user
+ProtectHome=true
+
+# Disallow the process and all of its children to gain
+# new privileges through execve().
+NoNewPrivileges=true
+
+# Use a new /dev namespace only populated with API pseudo devices
+# such as /dev/null, /dev/zero and /dev/random.
+PrivateDevices=true
+
+# Deny the creation of writable and executable memory mappings.
+MemoryDenyWriteExecute=true
+
+# Restrict ABIs to help ensure MemoryDenyWriteExecute is enforced
+SystemCallArchitectures=native
+
+# Prevents the service (and any processes it spawns) from loading, unloading, or modifying Linux kernel modules
+ProtectKernelModules=true
+
+# Prevents the service (and any processes it spawns) from modifying or creating control groups (cgroups) on the system
+ProtectControlGroups=true
+
+# Limits which network address families the service can use
+# Arti needs both IPv4 and IPv6 for Tor network connectivity
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Prevents the service (and any processes it spawns) from gaining real-time scheduling privileges
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

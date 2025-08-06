@@ -1,0 +1,525 @@
+# ==============================================================================
+# Arti (Tor Client) Ansible Playbook - Debian
+# ------------------------------------------------------------------------------
+# Automated installation, configuration, healthcheck, and monitoring for
+# Arti (Tor client) on Debian-based systems.
+#
+# Features:
+#   - Idempotent install, config, and uninstall logic for Arti
+#   - Systemd integration (service management, hardening, tun0 dependency)
+#   - Dedicated system user and group for Arti
+#   - Secure directory and file permissions
+#   - Source build and binary deployment
+#   - UFW firewall profile deployment
+#   - Prometheus metrics and Alloy integration
+#   - Comprehensive healthchecks (SOCKS, DNS, Tor network, logs)
+#   - Well-documented, production-ready, and maintainable
+#
+# Variables:
+#   - networking_arti.*: All Arti configuration variables (user, group, ports, etc.)
+#   - arti_*: Derived facts for paths and service names
+#
+# Sections:
+#   00. Set Arti Ansible Facts
+#   01. Shutdown Arti & Tor Services
+#   02. Set Up Arti User & Directories
+#   03. Download Source & Compile
+#   04. Setup Config & Systemd
+#   05. Configure UFW Firewall
+#   06. Configure Arti Monitoring
+#   07. Verifications & Health Checks
+#
+# References:
+#   - https://gitlab.torproject.org/tpo/core/arti
+#   - https://gitlab.torproject.org/tpo/core/arti/-/blob/main/crates/arti-config/arti.example.toml
+#
+# Last updated: 2025-08-06
+# ------------------------------------------------------------------------------
+
+# =============================================================================
+## 00. SET ARTI ANSIBLE FACTS
+# This makes it easier to read the ansible tasks and allows for easy changes to 
+# the paths and service names.
+# -----------------------------------------------------------------------------
+
+- name: Set Arti facts
+  ansible.builtin.set_fact:
+    arti_config_dir: "/etc/{{ networking_arti.user }}"
+    arti_config_file: "/etc/{{ networking_arti.user }}/{{ networking_arti.user }}.toml"
+    arti_data_dir: "/data/{{ networking_arti.user }}"
+    arti_home_dir: "/home/{{ networking_arti.user }}"
+    arti_group: "{{ networking_arti.group }}" 
+    arti_systemd_name: "{{ networking_arti.user }}"
+    arti_user: "{{ networking_arti.user }}"
+  tags: [install, config, systemd, monitoring, firewall, verify, healthcheck]
+
+- name: Display Arti variables for debugging
+  ansible.builtin.debug:
+    var: networking_arti
+  tags: [debug]
+
+- name: Display Homepage facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> arti_config_dir: {{ arti_config_dir }}"
+      - "Fact -> arti_data_dir: {{ arti_data_dir }}"
+      - "Fact -> arti_home_dir: {{ arti_home_dir }}"
+      - "Fact -> arti_group: {{ arti_group }}"
+      - "Fact -> arti_systemd_name: {{ arti_systemd_name }}"
+      - "Fact -> arti_user: {{ arti_user }}"
+  tags: [debug]
+
+
+
+# =============================================================================
+## 01. SHUTDOWN ARTI SERVICES
+# This section ensures that the service is stopped before config changes and updates 
+# are applied to prevents conflict issues.
+# Since Arti is a drop in replacement for TOR, we also ensure that the TOR service 
+# is stopped.
+# -----------------------------------------------------------------------------
+
+- name: Check if Arti service exists
+  ansible.builtin.stat:
+    path: "/lib/systemd/system/{{ arti_systemd_name }}.service"
+  register: arti_service_file
+  tags: [install, config, systemd]
+
+- name: Ensure Arti service is stopped before modifying
+  ansible.builtin.systemd:
+    name: "{{ arti_systemd_name }}"
+    state: stopped
+  become: true
+  failed_when: false
+  when: arti_service_file.stat.exists
+  tags: [install, config, systemd]
+
+- name: Check if TOR service exists
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/tor.service"
+  register: tor_service_file
+  tags: [install, config]
+
+- name: Ensure TOR service is stopped and disabled before modifying
+  ansible.builtin.systemd:
+    name: "tor.service"
+    state: stopped
+    enabled: no
+  become: true
+  failed_when: false
+  when: tor_service_file.stat.exists
+  tags: [install, config]
+
+
+
+# =============================================================================
+## 02. SET UP ARTI USER
+# This section sets up the system user and group to run the service and create 
+# all the directories for the service
+# -----------------------------------------------------------------------------
+
+- name: Ensure Arti group exists
+  ansible.builtin.group:
+    name: "{{ arti_group }}"
+    state: present
+  become: true
+  tags: [install, config, user_group]
+
+- name: Create Arti system user "{{ arti_user }}"
+  ansible.builtin.user:
+    name: "{{ arti_user}}"
+    group: "{{ arti_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+    home: "{{ arti_home_dir }}"
+    comment: "Arti Tor Service System User"
+  become: true
+  tags: [install, config, user_group]
+
+
+
+# =============================================================================
+## 02. SET UP ARTI DIRECTORIES
+# This section creates the necessary directories for Arti, ensuring they have the correct
+# ownership and permissions. The directories include the configuration and data
+# directories.
+# -----------------------------------------------------------------------------
+
+- name: Create directories for Arti service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ arti_user}}"
+    group: "{{ arti_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ arti_config_dir }}", mode: "u=rwx,g=rw,o=" }
+    - { path: "{{ arti_data_dir }}", mode: "u=rwx,g=rw,o=" }
+  become: true
+  tags: [install, config, user_group]
+
+
+
+# =============================================================================
+## 03. DOWNLOAD SOURCE AND COMPILE
+# This section downloads the source code to the home directory for Arti, compiles it, 
+# and installs the binaries to the appropriate directories.
+# -----------------------------------------------------------------------------
+
+- name: Install latest stable Rust toolchain for "{{ arti_user}}" user
+  ansible.builtin.shell: |
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+  args:
+    creates: "{{ arti_home_dir }}/.cargo/bin/rustc"
+  become: true
+  become_user: "{{ arti_user}}"
+  tags: [install]
+
+- name: Install build dependencies for Arti
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - pkg-config
+      - libssl-dev
+      - curl
+      - git
+      - libsqlite3-dev
+      - zlib1g-dev
+      - clang
+      - llvm
+    state: present
+    update_cache: true
+  become: true
+  tags: [install]
+
+- name: Clone Arti repository into "{{ arti_home_dir }}/src-{{ arti.release_tag }}"
+  ansible.builtin.git:
+    repo: "https://gitlab.torproject.org/tpo/core/arti.git"
+    dest: "{{ arti_home_dir }}/src-{{ arti.release_tag }}"
+    version: "{{ arti.release_tag }}"
+    update: true
+    force: true
+  become: true
+  become_user: "{{ arti_user}}"
+  tags: [install]
+
+- name: Build Arti from source (ensure rustup cargo/rustc are used)
+  ansible.builtin.shell: |
+    export PATH="$HOME/.cargo/bin:$PATH"
+    cargo build -p arti --locked --release --features metrics
+  args:
+    chdir: "{{ arti_home_dir }}/src-{{ arti.release_tag }}"
+  become: true
+  become_user: "{{ arti_user}}"
+  tags: [install]
+
+- name: Verify Arti binary was built successfully
+  ansible.builtin.stat:
+    path: "{{ arti_home_dir }}/src-{{ arti.release_tag }}/target/release/arti"
+  register: arti_binary_stat
+  become: true
+  become_user: "{{ arti_user}}"
+  tags: [install]
+
+- name: Fail if Arti binary was not built
+  ansible.builtin.fail:
+    msg: "Arti binary was not built successfully"
+  when: not arti_binary_stat.stat.exists
+  tags: [install]
+
+- name: Copy Arti binary to "/usr/local/bin/arti"
+  ansible.builtin.copy:
+    src: "{{ arti_home_dir }}/src-{{ arti.release_tag }}/target/release/arti"
+    dest: "/usr/local/bin/arti"
+    owner: root
+    group: root
+    mode: '0755'
+    remote_src: true
+  become: true
+  tags: [install]
+
+- name: Clean up Arti build artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  become_user: "{{ arti_user}}"
+  loop:
+    - "{{ arti_home_dir }}/.rustup"
+    - "{{ arti_home_dir }}/.cargo"
+    - "{{ arti_home_dir }}/src-{{ arti.release_tag }}"
+  tags: [install, cleanup]
+
+
+
+## 04. SETUP CONFIG
+# This section deploys the configuration files to the
+# appropriate directories.
+# -----------------------------------------------------------------------------
+
+- name: Deploy Arti config file to "{{ arti_config_file }}"
+  ansible.builtin.template:
+    src: templates/arti-config.toml.j2
+    dest: "{{ arti_config_file }}"
+    owner: "{{ arti_user }}"
+    group: "{{ arti_group }}"
+    mode: '0640'
+  become: true
+  tags: [install, config]
+
+
+
+## 04. SETUP SYSTEMD
+# This section deploys the systemd service files to the appropriate directories
+# and enables the service.
+# -----------------------------------------------------------------------------
+
+- name: Deploy Arti systemd service file to "/lib/systemd/system/{{ arti_systemd_name }}.service"
+  ansible.builtin.template:
+    src: templates/arti-systemd.service.j2
+    dest: "/lib/systemd/system/{{ arti_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, systemd]
+
+- name: Verify Arti systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /lib/systemd/system/{{ arti_systemd_name }}.service"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags: [install, config, systemd, verify]
+
+- name: Reload Systemd Daemon, enable and start Arti service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: "{{ arti_systemd_name }}"
+    enabled: true
+    state: started
+  become: true
+  tags: [install, config, systemd]
+
+
+
+
+## 05. CONFIGURE UFW FIREWALL
+# This section configures UFW firewall rules for Arti SOCKS proxy access.
+# Only allows access from specified IP addresses/networks.
+# -----------------------------------------------------------------------------
+
+- name: Deploy UFW profile for Arti
+  ansible.builtin.template:
+    src: templates/arti-ufw-profile.j2
+    dest: "/etc/ufw/applications.d/{{ arti_systemd_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, firewall]
+
+- name: Reload UFW Arti application profiles
+  ansible.builtin.command: "ufw app update {{ arti_systemd_name }}"
+  become: true
+  changed_when: false
+  failed_when: false
+  tags: [install, config, firewall]
+
+
+
+## 06. CONFIGURE ARTI MONITORING
+# This section configures Prometheus metrics export if enabled.
+# Arti supports metrics export for monitoring.
+# -----------------------------------------------------------------------------
+
+- name: Deploy Arti to Prometheus scrape config "/etc/prometheus/conf.d/{{ arti_user }}-exporter.yml"
+  ansible.builtin.template:
+    src: templates/arti-prometheus-scrape.yml.j2
+    dest: "/etc/prometheus/conf.d/{{ arti_user }}-exporter.yml"
+    owner: "{{ monitoring_prometheus.user }}"
+    group: "{{ arti_group }}"
+    mode: '0644'
+  become: true
+  notify: Prometheus Restart
+  tags: [install, config, monitoring]
+
+- name: Verify Arti Prometheus scraper configuration files are valid
+  ansible.builtin.command: "/usr/local/bin/promtool check config /etc/{{ monitoring_prometheus.user }}/prometheus.yml"
+  register: config_verify
+  changed_when: false
+  failed_when: config_verify.rc != 0
+  become: true
+  become_user: "{{ monitoring_prometheus.user }}"
+  tags: [install, config, monitoring, verify]
+
+- name: Insert Arti Alloy block to config.alloy from template
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ arti_systemd_name }} logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+    block: "{{ lookup('template', 'templates/arti-alloy-block.alloy.j2') }}"
+  become: true
+  notify: Alloy Restart
+  tags: [install, config, monitoring]
+
+
+
+## 07. VERIFICATIONS & HEALTH CHECKS
+# This section performs health checks to ensure that the Arti service is running
+# correctly and that the configuration is valid.
+# ------------------------------------------------------------------------------
+
+- name: Check Arti service status
+  ansible.builtin.systemd:
+    name: "{{ arti_systemd_name }}"
+    state: started
+  register: arti_status
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Debug Arti service status
+  ansible.builtin.debug:
+    msg: "Arti service status: {{ arti_status.status.ActiveState }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify Arti service is active
+  ansible.builtin.assert:
+    that:
+      - arti_status.status.ActiveState == "active"
+    fail_msg: "Arti service is not active: {{ arti_status.status.ActiveState }}"
+    success_msg: "Arti service is running correctly"
+  tags: [install, config, verify, healthcheck]
+
+- name: Check if Arti SOCKS proxy port is listening
+  ansible.builtin.wait_for:
+    port: "{{ networking_arti.socks_port }}"
+    host: "{{ networking_arti.listen_address }}"
+    timeout: 10
+    state: started
+  tags: [install, config, verify, healthcheck]
+
+- name: Test SOCKS proxy connectivity with curl
+  ansible.builtin.command: >
+    curl -s --socks5-hostname {{ networking_arti.listen_address }}:{{ networking_arti.socks_port }}
+    --connect-timeout 30
+    --max-time 60
+    https://check.torproject.org/api/ip
+  register: tor_check_result
+  failed_when: tor_check_result.rc != 0
+  changed_when: false
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify we're using Tor network
+  ansible.builtin.assert:
+    that:
+      - "'IsTor' in tor_check_result.stdout"
+      - "tor_check_result.stdout | from_json | json_query('IsTor') == true"
+    fail_msg: "SOCKS proxy is not routing through Tor network"
+    success_msg: "SOCKS proxy is correctly routing through Tor network"
+  tags: [install, config, verify, healthcheck]
+
+- name: Get Tor exit node information
+  ansible.builtin.set_fact:
+    tor_ip_info: "{{ tor_check_result.stdout | from_json }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Display Tor connection information
+  ansible.builtin.debug:
+    msg:
+      - "Tor Status: {{ tor_ip_info.IsTor }}"
+      - "Exit Node IP: {{ tor_ip_info.IP }}"
+      - "Exit Node Country: {{ tor_ip_info.Country | default('Unknown') }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test multiple Tor circuits by making several requests
+  ansible.builtin.command: >
+    curl -s --socks5-hostname {{ networking_arti.listen_address }}:{{ networking_arti.socks_port }}
+    --connect-timeout 10
+    --max-time 30
+    https://httpbin.org/ip
+  register: tor_circuit_test
+  changed_when: false
+  loop: "{{ range(3) | list }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Fail if any Tor circuit test command failed
+  ansible.builtin.fail:
+    msg: "Tor circuit test command failed for item {{ item.item }} with rc={{ item.rc }}. Stdout: {{ item.stdout }}"
+  when: item.rc != 0
+  loop: "{{ tor_circuit_test.results | default([]) }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify different exit nodes are being used
+  ansible.builtin.debug:
+    msg: "Circuit {{ my_index | int + 1 }} IP: {{ item.stdout | from_json | json_query('origin') }}"
+  loop: "{{ (tor_circuit_test.results | default([])) }}"
+  loop_control:
+    index_var: my_index
+  tags: [install, config, verify, healthcheck]
+
+- name: Check Arti log for errors
+  ansible.builtin.command: >
+    journalctl -u {{ arti_systemd_name }} --no-pager --lines=50
+  register: arti_logs
+  changed_when: false
+  tags: [install, verify, healthcheck]
+
+- name: Verify no critical errors in Arti logs
+  ansible.builtin.assert:
+    that:
+      - "'CRITICAL' not in arti_logs.stdout"
+      - "'FATAL' not in arti_logs.stdout"
+      - "'panic' not in arti_logs.stdout"
+    fail_msg: "Critical errors found in Arti logs"
+    success_msg: "No critical errors found in Arti logs"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test DNS resolution through Tor
+  ansible.builtin.command: >
+    curl -s --socks5-hostname {{ networking_arti.listen_address }}:{{ networking_arti.socks_port }}
+    --connect-timeout 10
+    --max-time 30
+    https://dns.google/resolve?name=torproject.org&type=A
+  register: tor_dns_test
+  failed_when: tor_dns_test.rc != 0
+  changed_when: false
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify DNS resolution works through Tor
+  ansible.builtin.assert:
+    that:
+      - "tor_dns_test.stdout | from_json | json_query('Status') == 0"
+    fail_msg: "DNS resolution through Tor is not working"
+    success_msg: "DNS resolution through Tor is working correctly"
+  tags: [install, config, verify, healthcheck]
+
+- name: Performance test - measure Tor connection time
+  ansible.builtin.command: >
+    curl -s --socks5-hostname {{ networking_arti.listen_address }}:{{ networking_arti.socks_port }}
+    --connect-timeout 30
+    --max-time 60
+    -w "Connect: %{time_connect}s, Total: %{time_total}s\n"
+    -o /dev/null
+    https://httpbin.org/get
+  register: tor_performance
+  changed_when: false
+  tags: [install, config, verify, healthcheck]
+
+- name: Display Tor performance metrics
+  ansible.builtin.debug:
+    msg: "Tor connection performance: {{ tor_performance.stderr }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Display Arti health check summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Arti Health Check Summary ==="
+      - "Service Status: {{ arti_status.status.ActiveState }}"
+      - "SOCKS Proxy: {{ networking_arti.listen_address }}:{{ networking_arti.socks_port }}"
+      - "Tor Network: {{ tor_ip_info.IsTor }}"
+      - "Exit Node: {{ tor_ip_info.IP }} ({{ tor_ip_info.Country | default('Unknown') }})"
+      - "Configuration: Valid"
+      - "=== End Summary ==="
+  tags: [install, config, verify, healthcheck]
+

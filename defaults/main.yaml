@@ -22,11 +22,18 @@
 
 # ---------------------------- [ NETWORKING ] ----------------------------------
 
-# Network configuration
-networking_networks: 
-  local: "{{ vault_networks_local }}"
-  lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
-  unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
+## Arti (Tor Client)
+# https://gitlab.torproject.org/tpo/core/arti
+networking_arti:
+  user: 'arti'
+  group: 'arti'
+  release_tag: 'arti-v1.4.5'                        # <-- https://gitlab.torproject.org/tpo/core/arti/-/tags
+  listen_address: '127.0.0.1'                       # Networking interface binding address
+  socks_port: 9055                                  # TOR SOCKS proxy port
+  metrics_port: 9179                                # Prometheus metrics port
+  dns_port: 0                                       # 0 means disabled, when DNS is typically handled through SOCKS proxy
+  log_level: 'warn'                                 # Set to info, debug, warn, error, or trace
+  predicted_ports: [80, 443]
 
 networking_homepage:
   user: 'homepage'
@@ -45,6 +52,12 @@ networking_lets_encrypt:
   domain: '{{ ansible_fqdn }}'                                        # Domain for the certificate
   domain_email: '{{ vault_networking_domain_email }}'                 # Email for Let's Encrypt notifications
   cloudflare_dns_api_key: '{{ vault_networking_cloudflare_token }}'   # Cloudflare DNS API key
+
+# Network configuration
+networking_networks: 
+  local: "{{ vault_networks_local }}"
+  lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
+  unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
 
 ## Nginx Configuration
 networking_nginx:
@@ -70,7 +83,6 @@ networking_ssh:
   listen_port: "22"                                     # SSH listenging port
   user_access_group: 'ssh-users'                        # Group for SSH access
   user_access_list: "{{ vault_ssh_user_access_list }}"  # List of users with SSH access
-
 
 ## UFW Configuration
 networking_ufw:

@@ -60,6 +60,11 @@
       tags:
         - homepage
 
+    - name: Install and Configure Arti
+      ansible.builtin.include_tasks: arti-debian.yaml
+      tags:
+        - arti
+
 
 ## RedHat family tasks block
 # ------------------------------------------------------------------------------

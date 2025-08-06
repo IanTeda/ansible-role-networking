@@ -55,3 +55,11 @@
     enabled: true
     daemon_reload: true
   become: true
+
+- name: Alloy Restart
+  ansible.builtin.systemd:
+    name: alloy
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true

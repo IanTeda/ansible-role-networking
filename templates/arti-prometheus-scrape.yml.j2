@@ -1,0 +1,35 @@
+# ==============================================================================
+# ⚠️ WARNING: THIS FILE IS MANAGED BY ANSIBLE
+#
+# Any manual changes will be overwritten on the next playbook run.
+# Please edit the template file in the Ansible role instead.
+# Source: roles/debian/templates/arti-prometheus-scrape.j2
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Prometheus Scrape Configuration for Arti Tor Client
+# ------------------------------------------------------------------------------
+#
+# This configuration defines the scrape job for the local Arti Tor client
+# instance. Arti provides metrics about Tor circuit health, connection status,
+# and performance statistics.
+#
+# This file is intended to be included in the main prometheus.yml via the
+# 'scrape_config_files' directive.
+#
+# Job Details:
+#   - job_name: 'arti'
+#   - Scrape Target: localhost on the configured Arti metrics port
+#   - Instance Label: Set to the host's FQDN for clear identification
+#
+# Last updated: {{ ansible_date_time.date }}
+# ------------------------------------------------------------------------------
+
+scrape_configs:
+  - job_name: 'arti'
+    static_configs:
+      - targets: ['127.0.0.1:{{ arti.metrics_port | default(9179) }}']
+        labels:
+          instance: '{{ ansible_fqdn }}'
+          service: 'arti'
+          environment: '{{ environment | default("production") }}'
