@@ -1,0 +1,6 @@
+// Send I2PD Systemd Journal logs to Loki
+loki.source.journal "{{ i2pd_systemd_name }}" {
+  matches = "_SYSTEMD_UNIT={{ i2pd_systemd_name }}.service"
+  relabel_rules = loki.relabel.systemd_journal.rules
+  forward_to = [loki.write.endpoint.receiver]
+}

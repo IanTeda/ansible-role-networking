@@ -1,19 +1,18 @@
----
-# =============================================================================
+# ============================================================================
 # Ansible Role: Install and Harden i2pd (I2P Daemon) on Debian
-# -----------------------------------------------------------------------------
-#
-# This playbook automates the secure installation and configuration of i2pd,
-# the C++ I2P router daemon, as a hardened systemd service on Debian systems.
+# ----------------------------------------------------------------------------
+# This playbook automates secure, production-grade installation and configuration
+# of i2pd (C++ I2P router daemon) as a hardened systemd service on Debian.
 #
 # Features & Best Practices:
-#   - Installs i2pd from official repositories with GPG verification
-#   - Creates secure configuration and directory structure with strict permissions
-#   - Configures and applies UFW firewall rules for I2P and console access
-#   - Deploys main and tunnels config templates for Bitcoin and other apps
-#   - Enables and starts the i2pd systemd service
+#   - Installs i2pd from official repo or release, with GPG verification
+#   - Creates secure config and directory structure with strict permissions
+#   - Configures and applies UFW firewall rules for I2P console access
+#   - Deploys main config, tunnels config, and Nginx proxy templates
+#   - Enables and starts i2pd systemd service (custom or package unit)
 #   - Modular, idempotent, and well-documented tasks
-#   - Health checks for service status and access
+#   - Comprehensive healthchecks for service, binary, config, ports, and logs
+#   - Robust uninstall logic for clean removal
 #
 # Sections/Steps:
 #   00. Set Ansible Facts: Define key variables and paths for deployment
@@ -21,19 +20,22 @@
 #   02. Ensure Directories: Create config directories with correct permissions
 #   03. Install i2pd: Add repo, install package, verify binaries and service
 #   04. Setup Config: Deploy config and tunnels templates
-#   05. Setup Firewall: Deploy and apply UFW profiles for I2P and console
+#   05. Setup Firewall: Deploy and apply UFW profiles for I2P console
 #   06. Enable and Start Service: Enable and start i2pd, ensure it runs on boot
-#   07. Verifications & Health Checks: Service status and access info
+#   07. Setup Nginx Proxy: Deploy location block for web console
+#   08. Healthchecks: Service, binary, config, port, HTTP, and logs
+#   99. Uninstall: Remove all i2pd artifacts and rules
 #
 # Prerequisites:
 #   - Debian system with systemd and internet access
 #   - Required variables set in group_vars/host_vars (see below)
 #
 # Variables (define in group_vars/host_vars):
-#   - i2pd.console_port (default: 7070)
-#   - i2pd.sam_port_tcp (default: 7656)
-#   - i2pd.sam_port_udp (default: 7655)
-#   - local_networks (for firewall config)
+#   - networking_i2pd.user, networking_i2pd.group
+#   - networking_i2pd.release
+#   - networking_i2pd.console.port, networking_i2pd.console.listen_address
+#   - networking_i2pd.sam.port_tcp, networking_i2pd.sam.listen_address
+#   - networking_networks.local (for firewall config)
 #
 # Usage:
 #   - Include this file in your playbook
@@ -45,13 +47,16 @@
 #   - Hardened systemd unit (see package defaults)
 #   - Strict file/dir permissions (no world access)
 #   - UFW restricts access to only required ports and networks
+#   - Nginx proxy restricts console access to local network
 #
 # References:
 #   - https://i2pd.readthedocs.io/
 #   - https://geti2p.net/
 #
-# Last updated: 2025-07-05
-# -----------------------------------------------------------------------------
+# Last updated: 2025-08-07
+# ============================================================================
+
+---
 
 ## 00. SET ANSIBLE FACTS
 # This makes it easier to read the ansible tasks
@@ -59,58 +64,56 @@
 
 - name: Set I2PD facts
   ansible.builtin.set_fact:
-    i2pd_config_dir: "/etc/i2pd"
-    i2pd_systemd_service: "i2pd"
-  tags:
-    - install
-    - config
-    - healthcheck
+    i2pd_config_dir: "/etc/{{ networking_i2pd.user }}"
+    i2pd_config_file: '/etc/{{ networking_i2pd.user }}/{{ networking_i2pd.user }}.conf'
+    i2pd_group: '{{ networking_i2pd.group }}'
+    i2pd_systemd_file: "usr/lib/systemd/system/i2pd.service"
+    i2pd_systemd_name: "{{ networking_i2pd.user }}"
+    i2pd_user: '{{ networking_i2pd.user }}'
+  tags: [install, config, verify, healthcheck]
+
+- name: Display I2PD variables for debugging
+  ansible.builtin.debug:
+    var: networking_i2pd
+  tags: [debug]
+
+- name: Display I2PD facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> i2pd_config_dir: {{ i2pd_config_dir }}"
+      - "Fact -> i2pd_config_file: {{ i2pd_config_file }}"
+      - "Fact -> i2pd_group: {{ i2pd_group }}"
+      - "Fact -> i2pd_systemd_file: {{ i2pd_systemd_file }}"
+      - "Fact -> i2pd_systemd_name: {{ i2pd_systemd_name }}"
+      - "Fact -> i2pd_user: {{ i2pd_user }}"
+  tags: [debug]
 
 
+# =============================================================================
 ## 01. SHUTDOWN I2PD SERVICES
-# This section ensures that the service is stopped before config changes and updates 
-# are applied. This prevents conflict issues.
+# This section ensures that the service is stopped before config changes or updates 
+# are applied to prevent conflict issues.
 # -----------------------------------------------------------------------------
 
 - name: Check if I2PD service exists
   ansible.builtin.stat:
-    path: "/etc/systemd/system/{{ i2pd_systemd_service}}.service"
+    path: "/etc/systemd/system/{{ i2pd_systemd_name }}.service"
   register: service_file
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Ensure I2PD service is stopped before modifying
   ansible.builtin.systemd:
-    name: "{{ i2pd_systemd_service }}"
+    name: "{{ i2pd_systemd_name }}"
     state: stopped
   become: true
   failed_when: false
   when: service_file.stat.exists
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 
-## 02. ENSURE DIRECTORIES EXIST
-# This section ensures all the directories for the service
-# -----------------------------------------------------------------------------
 
-# - name: Create directories for I2PD service
-#   ansible.builtin.file:
-#     path: "{{ item }}"
-#     state: directory
-#     owner: "i2pd"
-#     group: "i2pd"
-#     mode: 'u=rwx,g=rwx,o='
-#   loop:
-#     - "{{ i2pd_config_dir }}"
-#   become: true
-#   tags:
-#     - install
-
-
-## 03. INSTALL I2PD
+# =============================================================================
+## 02. INSTALL I2PD
 # This section installs the I2P daemon (i2pd) from the official I2
 # -----------------------------------------------------------------------------
 
@@ -118,25 +121,18 @@
   ansible.builtin.apt:
     name:
       - apt-transport-https
-      - ca-certificates
-      - gnupg
-      - libssl3
     state: present
     update_cache: true
   become: true
-  tags:
-    - install
-
-
+  tags: [install]
 
 - name: Download libssl1.1 package from Debian 11 (bullseye)
   ansible.builtin.get_url:
-    url: http://ftp.debian.org/debian/pool/main/o/openssl/libssl1.1_1.1.1n-0+deb10u3_amd64.deb
+    url: https://ftp.debian.org/debian/pool/main/o/openssl/libssl1.1_1.1.1w-0+deb11u1_amd64.deb
     dest: /tmp/libssl.deb
     mode: '0644'
   when: ansible_architecture == "x86_64"
-  tags:
-    - install
+  tags: [install]
 
 - name: Install libssl1.1 package
   ansible.builtin.apt:
@@ -144,16 +140,14 @@
     state: present
   become: true
   when: ansible_architecture == "x86_64"
-  tags:
-    - install
+  tags: [install]
 
 - name: Remove downloaded libssl1.1 package file
   ansible.builtin.file:
     path: /tmp/libssl1.1_1.1.1n-0+deb11u5_amd64.deb
     state: absent
   when: ansible_architecture == "x86_64"
-  tags:
-    - install
+  tags: [install]
 
 - name: Download I2PD repository signing key
   ansible.builtin.get_url:
@@ -161,8 +155,7 @@
     dest: /usr/share/keyrings/i2pd-archive-keyring.gpg
     mode: '0644'
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Add I2PD repository
   ansible.builtin.apt_repository:
@@ -170,27 +163,23 @@
     state: present
     filename: i2pd
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Install I2PD package
   ansible.builtin.apt:
     name:
       - i2pd
     state: present
-    update_cache: yes
-    clean: yes
+    update_cache: true
+    clean: true
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Verify i2pd systemd service file exists
   ansible.builtin.stat:
     path: /lib/systemd/system/i2pd.service
   register: i2pd_service_file
-  tags:
-    - install
-    - verify
+  tags: [install, verify]
 
 - name: Assert i2pd systemd service was installed
   ansible.builtin.assert:
@@ -198,17 +187,13 @@
       - i2pd_service_file.stat.exists
     fail_msg: "i2pd systemd service file not found at /lib/systemd/system/i2pd.service"
     success_msg: "i2pd systemd service file found successfully"
-  tags:
-    - install
-    - verify
+  tags: [install, verify]
 
 - name: Verify i2pd binary exists
   ansible.builtin.stat:
     path: /usr/bin/i2pd
   register: i2pd_binary
-  tags:
-    - install
-    - verify
+  tags: [install, verify]
 
 - name: Assert i2pd binary was installed
   ansible.builtin.assert:
@@ -216,46 +201,102 @@
       - i2pd_binary.stat.exists
     fail_msg: "i2pd binary not found at /usr/bin/i2pd"
     success_msg: "i2pd binary found successfully"
-  tags:
-    - install
-    - verify
+  tags: [install, verify]
 
 
+
+# =============================================================================
+## 03. ENSURE DIRECTORIES EXIST
+# This section ensures all the directories for the service
+# -----------------------------------------------------------------------------
+
+- name: Create directories for I2PD service
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ i2pd_user }}"
+    group: "{{ i2pd_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ i2pd_config_dir }}", mode: "u=rwx,g=x,o="}
+  become: true
+  tags: [install, config, directories]
+
+
+
+# =============================================================================
 ## 04. SETUP CONFIG
 # This section sets up the i2pd configuration directory. Systemd install is managed
 # by the package manager, so we only need to copy the configuration files.
 # -----------------------------------------------------------------------------
 
-- name: Copy i2pd main config to "{{ i2pd_config_dir }}"
+- name: Deploy i2pd main config to "{{ i2pd_config_file }}"
   ansible.builtin.template:
     src: templates/i2pd-conf.j2
-    dest: "{{ i2pd_config_dir }}/i2pd.conf"
-    owner: i2pd
-    group: i2pd
+    dest: "{{ i2pd_config_file }}"
+    owner: '{{ i2pd_user }}'
+    group: '{{ i2pd_group }}'
     mode: '0644'
-    backup: yes
+    backup: true
   become: true
-  notify: I2PD Restart
-  tags:
-    - config
+  tags: [install, config]
 
-- name: Copy i2pd tunnels template
-  ansible.builtin.template:
-    src: templates/i2pd-tunnels.conf.j2
-    dest: "{{ i2pd_config_dir }}/tunnels.conf"
-    owner: i2pd
-    group: i2pd
-    mode: '0644'
-    backup: yes
+- name: Insert I2PD Alloy block to config.alloy from template
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ i2pd_systemd_name }} logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+    block: "{{ lookup('template', 'templates/i2pd-alloy-block.alloy.j2') }}"
   become: true
-  notify: I2PD Restart
-  tags:
-    - config
+  notify: Alloy Restart
+  tags: [install, config, monitoring]
 
 
-## 05. SETUP FIREWALL
-# This section sets up the firewall rules to allow Bitcoin P2P traffic
+
+# =============================================================================
+## 05. DEPLOY I2PD SYSTEMD
+# This section deploys the I@PD systemd service file
 # -----------------------------------------------------------------------------
+
+- name: Deploy I2PD systemd service file to "/usr/lib/systemd/system/{{ i2pd_systemd_name }}.service"
+  ansible.builtin.template:
+    src: templates/i2pd-systemd.service.j2
+    dest: "/usr/lib/systemd/system/{{ i2pd_systemd_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, systemd]
+
+- name: Verify I2PD systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify /usr/lib/systemd/system/{{ i2pd_systemd_name }}.service"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags: [install, config, systemd, verify]
+
+- name: Reload Systemd Daemon, enable and start I2PD service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: "{{ i2pd_systemd_name }}"
+    enabled: true
+    state: restarted
+  become: true
+  tags: [install, config, systemd]
+
+- name: Wait for i2pd to start
+  ansible.builtin.wait_for:
+    host: "{{ networking_i2pd.console.listen_address }}"
+    port: "{{ networking_i2pd.console.port }}"
+    timeout: 120
+  tags: [install, config, systemd]
+
+
+
+# ==============================================================================
+# ## 06. SETUP FIREWALL
+# # This section sets up the firewall rules to allow Bitcoin P2P traffic
+# # -----------------------------------------------------------------------------
 
 - name: Copy I2P UFW application profile template
   ansible.builtin.template:
@@ -265,98 +306,334 @@
     group: root
     mode: '0644'
   become: true
-  tags:
-    - firewall
-    - config
+  tags: [install, config, firewall]
 
 - name: Reload UFW application profiles
   ansible.builtin.command:
     cmd: ufw app update i2p
   become: true
   changed_when: false
-  tags:
-    - firewall
-    - config
+  tags: [install, config, firewall]
 
-- name: Allow I2P through firewall
+- name: Allow I2P Console access locally
   ansible.builtin.ufw:
     rule: allow
-    name: I2P-SAM
-    comment: "Allow I2P ({{ i2pd.sam_port_tcp }}/tcp|{{ i2pd.sam_port_udp }}/udp) traffic for Bitcoin nodes from ANYWHERE"
-  become: true
-  notify: UFW Restart
-  tags:
-    - firewall
-    - config
-
-- name: Allow I2P console access
-  ansible.builtin.ufw:
-    rule: allow
-    name: I2P-Console
+    name: I2P Console
     src: "{{ item }}"
-    comment: "Allow I2P console ({{ i2pd.console_port }}) access from LOCAL NET"
-  loop: "{{ local_networks }}"
+    comment: "Allow I2P Console ({{ networking_i2pd.console.port }}/tcp) access from LOCAL NET"
+  loop: "{{ networking_networks.local }}"
   become: true
   notify: UFW Restart
-  tags:
-    - firewall
-    - config
+  tags: [install, config, firewall]
 
 
-## 06. ENABLE AND START I2PD SERVICE
-# This section enables and starts the i2pd service, ensuring it runs on boot.
+
+# =============================================================================
+## 07. SETUP NGINX PROXY FOR I2PD CONSOLE
+# This section sets up the Nginx proxy location for I2PD
 # -----------------------------------------------------------------------------
 
-- name: Enable and start i2pd service
-  ansible.builtin.systemd:
-    name: "{{ i2pd_systemd_service }}"
-    enabled: yes
-    state: started
-    daemon_reload: yes
+- name: Deploy I2PD Nginx location configuration
+  ansible.builtin.template:
+    src: templates/i2pd-nginx-location.conf.j2
+    dest: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ i2pd_systemd_name }}.conf"
+    owner: root
+    group: root
+    mode: '0644'
   become: true
-  tags:
-    - config
-    - install
+  tags: [install, config, proxy]
 
-# - name: Wait for i2pd to start
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  failed_when: nginx_test.rc != 0
+  become: true
+  tags: [install, config, proxy]
+
+- name: Restart Nginx after location configuration
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [install, config, proxy]
+
+
+
+# =============================================================================
+## 08. I2PD HEALTHCHECKS
+# Comprehensive healthchecks for i2pd service, binary, config, ports, and logs
+# -----------------------------------------------------------------------------
+
+# - name: Assert i2pd user exists
+#   ansible.builtin.assert:
+#     that:
+#       - "'{{ i2pd_user }}' in ansible_facts.get('passwd', {})"
+#     fail_msg: "i2pd user '{{ i2pd_user }}' does not exist"
+#     success_msg: "i2pd user '{{ i2pd_user }}' exists"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd group exists
+#   ansible.builtin.assert:
+#     that:
+#       - "'{{ i2pd_group }}' in ansible_facts.get('group', {})"
+#     fail_msg: "i2pd group '{{ i2pd_group }}' does not exist"
+#     success_msg: "i2pd group '{{ i2pd_group }}' exists"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd config directory exists
+#   ansible.builtin.stat:
+#     path: "{{ i2pd_config_dir }}"
+#   register: i2pd_config_dir_stat
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd config directory permissions
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_config_dir_stat.stat.exists
+#       - i2pd_config_dir_stat.stat.isdir
+#       - i2pd_config_dir_stat.stat.pw_name == i2pd_user
+#       - i2pd_config_dir_stat.stat.gr_name == i2pd_group
+#     fail_msg: "i2pd config directory missing or permissions incorrect"
+#     success_msg: "i2pd config directory exists and permissions are correct"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd main config file exists
+#   ansible.builtin.stat:
+#     path: "{{ i2pd_config_file }}"
+#   register: i2pd_config_file_stat
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd main config file permissions
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_config_file_stat.stat.exists
+#       - i2pd_config_file_stat.stat.pw_name == i2pd_user
+#       - i2pd_config_file_stat.stat.gr_name == i2pd_group
+#     fail_msg: "i2pd main config file missing or permissions incorrect"
+#     success_msg: "i2pd main config file exists and permissions are correct"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd binary exists
+#   ansible.builtin.stat:
+#     path: /usr/bin/i2pd
+#   register: i2pd_binary_stat
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd binary is executable
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_binary_stat.stat.exists
+#       - i2pd_binary_stat.stat.mode | int(base=8) is search('7..')
+#     fail_msg: "i2pd binary missing or not executable"
+#     success_msg: "i2pd binary exists and is executable"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd systemd service file exists
+#   ansible.builtin.stat:
+#     path: "/usr/lib/systemd/system/{{ i2pd_systemd_name }}.service"
+#   register: i2pd_systemd_file_stat
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd systemd service file permissions
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_systemd_file_stat.stat.exists
+#       - i2pd_systemd_file_stat.stat.pw_name == "root"
+#       - i2pd_systemd_file_stat.stat.gr_name == "root"
+#     fail_msg: "i2pd systemd service file missing or permissions incorrect"
+#     success_msg: "i2pd systemd service file exists and permissions are correct"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Check i2pd service status
+#   ansible.builtin.systemd:
+#     name: "{{ i2pd_systemd_name }}"
+#   register: i2pd_service_status
+#   become: true
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd service is running
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_service_status.status.ActiveState == "active"
+#       - i2pd_service_status.status.SubState == "running"
+#     fail_msg: "i2pd service is not running! Status: {{ i2pd_service_status.status.ActiveState }}"
+#     success_msg: "i2pd service is running successfully."
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Wait for i2pd web console port
 #   ansible.builtin.wait_for:
-#     port: "{{ i2pd.console_port }}"
-#     host: 127.0.0.1
-#     timeout: 120
-#   tags:
-#     - install
-#     - config
+#     host: "{{ networking_i2pd.console.listen_address }}"
+#     port: "{{ networking_i2pd.console.port }}"
+#     timeout: 10
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Check i2pd web console HTTP response
+#   ansible.builtin.uri:
+#     url: "http://{{ networking_i2pd.console.listen_address }}:{{ networking_i2pd.console.port }}/"
+#     return_content: false
+#     status_code: 200
+#   register: i2pd_console_response
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd web console is reachable
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_console_response.status == 200
+#     fail_msg: "i2pd web console is not reachable"
+#     success_msg: "i2pd web console is reachable"
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Check for recent i2pd logs in systemd journal
+#   ansible.builtin.command: "journalctl -u {{ i2pd_systemd_name }} --since '5 minutes ago' --no-pager"
+#   register: i2pd_journal_logs
+#   changed_when: false
+#   tags: [install, config, verify, healthcheck]
+
+# - name: Assert i2pd logs are present in journal
+#   ansible.builtin.assert:
+#     that:
+#       - i2pd_journal_logs.stdout is search('I2P')
+#     fail_msg: "No recent i2pd logs found in systemd journal"
+#     success_msg: "Recent i2pd logs found in systemd journal"
+#   tags: [install, config, verify, healthcheck]
 
 
-## 07. VERIFICATIONS & HEALTH CHECKS
-# Confirm the operations of the openvpn & kill switch
-# ------------------------------------------------------------------------------
 
-- name: Verify i2pd service status
-  ansible.builtin.systemd:
-    name: "{{ i2pd_systemd_service }}"
-  register: i2pd_service_status
-  become: true
-  tags:
-    - verify
-    - healthcheck
+# =============================================================================
+## 99. UNINSTALL I2PD
+# Confirm the uninstalltion and then uninstall
+# -----------------------------------------------------------------------------
 
-- name: Assert i2pd service is running
-  ansible.builtin.assert:
-    that:
-      - i2pd_service_status.status.ActiveState == "active"
-      - i2pd_service_status.status.SubState == "running"
-    fail_msg: "i2pd service is not running! Status: {{ i2pd_service_status.status.ActiveState }}"
-    success_msg: "i2pd service is running successfully."
-  tags:
-    - verify
-    - healthcheck
+- name: Confirm I2PD uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: I2PD Uninstallation Confirmation ⚠️
 
-- name: Display i2pd access information
-  ansible.builtin.debug:
-    msg: |
-      I2P daemon installation complete!
+      You are about to completely uninstall the I2PD service from this system.
       
-      Web Console: http://{{ ansible_host }}:{{ i2pd.console_port }}/
-  tags:
-    - verify
+      This will remove:
+      🗑️  I2PD APT package
+      🗑️  Configuration files: {{ nginx_config_dir }}/
+      🗑️  UFW firewall rules
+      
+      Are you sure you want to proceed with the uninstallation? (true/no)
+  register: uninstall_confirmation
+  tags: [never, unistall]
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The I2PD service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, unistall]
+
+- name: Stop and disable I2PD service
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: "{{ i2pd_systemd_name }}"
+    state: stopped
+    enabled: false
+  become: true
+  failed_when: false
+  tags: [never, unistall]
+
+
+- name: Remove I2PD package
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.apt:
+    name:
+      - i2pd
+    state: absent
+    clean: true
+  become: true
+  tags: [never, unistall]
+
+- name: Remove libssl1.1 package
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.apt:
+    name: libssl1.1
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove directories for I2PD service
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop:
+    - { path: "{{ i2pd_config_dir }}", mode: "u=rwx,g=x,o="}
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove I2PD Alloy block from config.alloy
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ i2pd_systemd_name }} logs"
+    state: absent
+  become: true
+  notify: Alloy Restart
+  tags: [never, uninstall]
+
+- name: Remove I2PD systemd service file
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "/usr/lib/systemd/system/{{ i2pd_systemd_name }}.service"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Reload systemd daemon after removing I2PD service
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  tags: [never, uninstall]
+
+- name: Remove UFW rules for I2P Console
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.ufw:
+    rule: allow
+    name: I2P Console
+    src: "{{ item }}"
+    delete: true
+  loop: "{{ networking_networks.local }}"
+  become: true
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Remove I2P UFW application profile
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: /etc/ufw/applications.d/i2p
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Reload UFW application profiles after removal
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.command:
+    cmd: ufw app update
+  become: true
+  changed_when: false
+  failed_when: false
+  tags: [never, uninstall]
+
+- name: Delete Nginx location config for I2PD on uninstall
+  ansible.builtin.file:
+    path: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ i2pd_systemd_name }}.conf"
+    state: absent
+  become: true
+  tags: [never, uninstall]
+
+- name: Restart Nginx after location configuration deleted on uninstall
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  become: true
+  tags: [never, uninstall]

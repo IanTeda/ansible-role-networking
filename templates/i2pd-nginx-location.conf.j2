@@ -1,0 +1,24 @@
+# ============================================================================
+# Nginx Location Block for I2PD Web Console
+# ============================================================================
+# ⚠️ WARNING: This file is managed by Ansible - DO NOT EDIT MANUALLY!       ⚠️
+# Any manual changes will be overwritten on the next Ansible run.
+# Edit the template file or Ansible variables instead.
+#
+# Generated from: roles/networking/templates/i2pd-nginx-location.conf.j2
+# Last updated: {{ ansible_date_time.iso8601 }}
+# ============================================================================
+
+location /{{ networking_i2pd.path_prefix }}/ {
+    proxy_pass http://{{ networking_i2pd.console.listen_address }}:{{ networking_i2pd.console.port }}/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 90;
+}
+
+

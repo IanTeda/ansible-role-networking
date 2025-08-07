@@ -54,6 +54,8 @@ Documentation=https://gitlab.torproject.org/tpo/core/arti
 ######################
 # Wait for tun0 to be up before starting
 After=sys-subsystem-net-devices-tun0.device network-online.target
+
+# Stop service if tun0 goes down
 Requires=sys-subsystem-net-devices-tun0.device
 BindsTo=sys-subsystem-net-devices-tun0.device
 

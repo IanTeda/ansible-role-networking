@@ -46,6 +46,22 @@ networking_homepage:
   theme: 'dracula' # Options: light, dark, dracula, etc.
   allowed_hosts: '{{ ansible_hostname }}, {{ ansible_hostname }}:3000, {{ ansible_fqdn }}, {{ ansible_fqdn }}:3000' # <-- When pasting into host_vars, update to include vault_hostname_address
 
+# I2P Daemon Configuration
+# https://i2pd.readthedocs.io/en/latest/configuration.html
+networking_i2pd:
+  user: 'i2pd'
+  group: 'i2pd'
+  release: '2.57.0' # <-- https://github.com/PurpleI2P/i2pd/releases
+  log_level: 'info'  # Options: none, error, warn, info, debug, trace
+  console:
+    port: 7070
+    listen_address: '127.0.0.1'
+  sam:
+    listen_address: '127.0.0.1'
+    port_tcp: 7656
+    port_udp: 7655
+  path_prefix: 'i2p'
+
 networking_lets_encrypt:
   user: 'letsencrypt'                                                 # User for Let's Encrypt tasks
   group: 'letsencrypt'                                                # Group for Let's Encrypt tasks

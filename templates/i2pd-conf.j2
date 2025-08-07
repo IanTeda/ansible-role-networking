@@ -1,0 +1,51 @@
+# ============================================================================
+# i2pd-conf.j2 - I2P Daemon Main Configuration (Ansible Managed)
+# ----------------------------------------------------------------------------
+# This file is managed by Ansible. Manual changes may be overwritten.
+#
+# Purpose:
+#   - Minimal configuration for i2pd in client-only mode
+#   - Enables web console and SAM bridge
+#   - Suitable for secure, non-relay I2P usage
+#
+# Key Sections:
+#   - [router]: Core router settings, disables relaying (notransit)
+#   - [http]: Web console access
+#   - [ntcp2]: Transport protocol (required for connectivity)
+#   - [sam]: SAM bridge for local apps
+#   - [logging]: Logging level
+#
+# Variables:
+#   - networking_i2pd.console.address
+#   - networking_i2pd.console.port
+#   - networking_i2pd.sam.listen_address
+#   - networking_i2pd.sam.port_tcp
+#   - networking_i2pd.sam.port_udp
+#   - networking_i2pd.logging.level
+#
+# References:
+#   - https://i2pd.readthedocs.io/en/latest/configuration/
+#   - https://geti2p.net/en/docs/api/sam
+# ============================================================================
+
+log = stdout
+loglevel = '{{ networking_i2pd.log_level }}'
+notransit = true
+ipv4 = true
+ipv6 = false
+
+[http]
+# Web console settings
+enabled = true
+address = {{ networking_i2pd.console.listen_address }}
+port = {{ networking_i2pd.console.port }}
+
+[ntcp2]
+# Enable NTCP2 transport
+enabled = true
+
+[sam]
+# Enable SAM bridge
+enabled = true
+address = {{ networking_i2pd.sam.listen_address }}
+port = {{ networking_i2pd.sam.port_tcp }}
