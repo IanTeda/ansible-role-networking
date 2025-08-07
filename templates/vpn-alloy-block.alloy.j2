@@ -1,0 +1,6 @@
+// Send OpenVPN Systemd Journal logs to Loki
+loki.source.journal "openvpn_client" {
+  matches = "_SYSTEMD_UNIT={{ vpn_client_systemd_name }}.service"
+  relabel_rules = loki.relabel.systemd_journal.rules
+  forward_to = [loki.write.endpoint.receiver]
+}

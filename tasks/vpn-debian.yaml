@@ -55,6 +55,7 @@
   tags:
     - install
     - config
+    - monitoring
     - healthcheck
     - uninstall
 
@@ -440,6 +441,16 @@
     - install
     - config
     - restore
+
+- name: Insert OpenVPN Alloy block to config.alloy from template
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ vpn_client_systemd_name }} logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+    block: "{{ lookup('template', 'templates/vpn-alloy-block.alloy.j2') }}"
+  become: true
+  notify: Alloy Restart
+  tags: [install, config, monitoring]
 
 - name: Deploy custom OpenVPN client systemd service unit
   ansible.builtin.template:

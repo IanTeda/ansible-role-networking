@@ -62,6 +62,7 @@
     - config
     - healthcheck
     - uninstall
+    - monitoring
 
 - name: Get wired network interface name (excluding loopback and virtual)
   ansible.builtin.shell: |
@@ -194,6 +195,16 @@
     - install
     - config
     - verify
+
+- name: Insert I2PD Alloy block to config.alloy from template
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ ssh_systemd_name }} logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+    block: "{{ lookup('template', 'templates/ssh-alloy-block.alloy.j2') }}"
+  become: true
+  notify: Alloy Restart
+  tags: [install, config, monitoring]
 
 - name: Backup original ssh.service file
   ansible.builtin.copy:

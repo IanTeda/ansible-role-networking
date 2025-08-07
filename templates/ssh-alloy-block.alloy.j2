@@ -1,0 +1,6 @@
+// Send SSH Systemd Journal logs to Loki
+loki.source.journal "{{ ssh_systemd_name }}" {
+  matches = "_SYSTEMD_UNIT={{ ssh_systemd_name }}.service"
+  relabel_rules = loki.relabel.systemd_journal.rules
+  forward_to = [loki.write.endpoint.receiver]
+}
