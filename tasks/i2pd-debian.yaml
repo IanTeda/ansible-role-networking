@@ -70,7 +70,7 @@
     i2pd_systemd_file: "usr/lib/systemd/system/i2pd.service"
     i2pd_systemd_name: "{{ networking_i2pd.user }}"
     i2pd_user: '{{ networking_i2pd.user }}'
-  tags: [install, config, verify, healthcheck]
+  tags: [install, config, monitoring, verify, healthcheck]
 
 - name: Display I2PD variables for debugging
   ansible.builtin.debug:
