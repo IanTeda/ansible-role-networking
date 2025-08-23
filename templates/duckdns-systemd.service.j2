@@ -1,0 +1,25 @@
+[Unit]
+Description=DuckDNS IP Address Update Service
+
+# Wait for tun0 to be up before starting
+After=sys-subsystem-net-devices-tun0.device network-online.target
+Requires=sys-subsystem-net-devices-tun0.device
+BindsTo=sys-subsystem-net-devices-tun0.device
+
+# Soft dependency - ensure network is fully operational before starting
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ duckdns_update_script }}
+
+User={{ duckdns_user }}
+Group={{ duckdns_group }}
+
+# Log to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ duckdns_systemd_name }}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+
+// Send DuckDNS systemd journal logs to Loki
+loki.source.journal "{{ duckdns_systemd_name }}" {
+  matches = "_SYSTEMD_UNIT={{ duckdns_systemd_name }}.service"
+  relabel_rules = loki.relabel.systemd_journal.rules
+  forward_to = [loki.process.{{ duckdns_systemd_name }}.receiver]
+}
+
+loki.process "{{ duckdns_systemd_name }}" {
+  // Remove the initial timestamp (e.g., 2025-08-21 13:19:16.085)
+  // stage.regex {
+  //   expression = "^[0-9-]{10} [0-9:.]{12} (?P<msg>.*)$"
+  // }
+  // stage.output {
+  //   source = "msg"
+  // }
+  forward_to = [loki.write.endpoint.receiver]
+}

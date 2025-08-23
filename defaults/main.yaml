@@ -35,6 +35,13 @@ networking_arti:
   log_level: 'warn'                                 # Set to info, debug, warn, error, or trace
   predicted_ports: [80, 443]
 
+# DuckDNS Configuration
+networking_ddns:
+  user: 'duckdns'
+  group: 'duckdns'
+  domain: '{{ vault_networking_ddns_domain }}'
+  token: '{{ vault_networking_ddns_token }}'
+
 networking_homepage:
   user: 'homepage'
   group: 'homepage'
@@ -62,12 +69,15 @@ networking_i2pd:
     port_udp: 7655
   path_prefix: 'i2p'
 
+# Let's Encrypt TLS Certificate
 networking_lets_encrypt:
   user: 'letsencrypt'                                                 # User for Let's Encrypt tasks
   group: 'letsencrypt'                                                # Group for Let's Encrypt tasks
   domain: '{{ ansible_fqdn }}'                                        # Domain for the certificate
   domain_email: '{{ vault_networking_domain_email }}'                 # Email for Let's Encrypt notifications
   cloudflare_dns_api_key: '{{ vault_networking_cloudflare_token }}'   # Cloudflare DNS API key
+  private_key_path: '/etc/letsencrypt/live/{{ ansible_fqdn }}/privkey.pem'
+  certificate_path: "/etc/letsencrypt/live/{{ ansible_fqdn }}/fullchain.pem"
 
 # Network configuration
 networking_networks: 

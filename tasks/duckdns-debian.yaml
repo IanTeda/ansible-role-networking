@@ -1,0 +1,377 @@
+# =============================================================================
+# DuckDNS Role - Debian
+# Managed by Ansible
+#
+# This file automates installation, configuration, health checking, monitoring,
+# and uninstallation of the DuckDNS dynamic DNS update service on Debian systems.
+#
+# Features:
+# - Creates system user/group for DuckDNS
+# - Deploys update script and systemd service/timer
+# - Health checks and monitoring integration
+# - Safe, interactive uninstallation
+# - All tasks are idempotent and tagged for selective execution
+# =============================================================================
+
+---
+
+# =============================================================================
+## 01. SET DUCK DNS FACTS AND VARIABLES
+# Set up variables for ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set DuckDNS name facts
+  ansible.builtin.set_fact:
+    duckdns_user: "{{ networking_ddns.user | default('duckdns') }}"
+    duckdns_group: "{{ networking_ddns.group | default('duckdns') }}"
+    duckdns_systemd_name: "{{ networking_ddns.user | default('duckdns') }}"
+  tags: [always]
+
+- name: Set DuckDNS facts
+  ansible.builtin.set_fact:
+    duckdns_domain: "{{ networking_ddns.domain | default('get_me_from_duckdns_org')}}"
+    duckdns_token: "{{ networking_ddns.token | default('get_from_duckdns_org')}}"
+    duckdns_systemd_file: "/lib/systemd/system/{{ duckdns_systemd_name }}.service"
+    duckdns_timer_file: "/lib/systemd/system/{{ duckdns_systemd_name }}.timer"
+    duckdns_update_script: "/usr/local/bin/duckdns-update.sh"
+  tags: [always]
+
+- name: Display DuckDNS variables for debugging
+  ansible.builtin.debug:
+    var: networking_ddns
+  tags: [debug]
+
+- name: Confirm DuckDNS uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: DuckDNS Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the DuckDNS service from this system.
+
+      This will remove:
+      🗑️  Stop the service: {{ duckdns_systemd_name }}
+      🗑️  UFW Rules & Profile: {{ duckdns_ufw_file }}
+      🗑️  Remove Systemd service: {{ duckdns_systemd_name }}
+      🗑️  Alloy logs at: /etc/alloy/config.alloy
+      🗑️  Configuration files: {{ duckdns_config_file }}
+      🗑️  User account: {{ duckdns_user }}
+      🗑️  Service data, home and config folders
+      
+      Are you sure you want to proceed with the uninstallation? (true/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Abort uninstallation if not confirmed
+  when: not (uninstall_confirmation.user_input | bool)
+  ansible.builtin.fail:
+    msg: "Uninstallation aborted by user"
+  tags: [never, uninstall]
+
+
+
+# =============================================================================
+## 03. SET UP DUCKDNS SYSTEM GROUP AND USER
+# This section createss the user and group
+# -----------------------------------------------------------------------------
+
+- name: Create DuckDNS group "{{ duckdns_group }}"
+  ansible.builtin.group:
+    name: "{{ duckdns_group }}"
+    state: present
+  become: true
+  tags: [install, user-group]
+
+- name: Check if DuckDNS group exists
+  ansible.builtin.getent:
+    database: group
+    key: "{{ duckdns_group }}"
+  register: duckdns_group_getent
+  tags: [install, user-group, verify]
+
+- name: Assert DuckDNS group exists
+  ansible.builtin.assert:
+    that:
+      - duckdns_group_getent is defined
+      - duckdns_group_getent.ansible_facts is defined
+      - duckdns_group_getent.ansible_facts.getent_group is defined
+      - duckdns_group_getent.ansible_facts.getent_group[duckdns_group] is defined
+    fail_msg: "DuckDNS group '{{ duckdns_group }}' was not found in system"
+    success_msg: "DuckDNS group '{{ duckdns_group }}' exists"
+  tags: [install, user-group, verify]
+
+- name: Create "{{ duckdns_user }}" system user
+  ansible.builtin.user:
+    name: "{{ duckdns_user }}"
+    group: "{{ duckdns_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    comment: "DuckDNS system user"
+  become: true
+  tags: [install, user-group]
+
+- name: Check if DuckDNS user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ duckdns_user }}"
+  register: duckdns_user_getent
+  tags: [install, user-group, verify]
+
+- name: Assert DuckDNS user exists
+  ansible.builtin.assert:
+    that:
+      - duckdns_user_getent is defined
+      - duckdns_user_getent.ansible_facts is defined
+      - duckdns_user_getent.ansible_facts.getent_passwd is defined
+      - duckdns_user_getent.ansible_facts.getent_passwd[duckdns_user] is defined
+    fail_msg: "DuckDNS user '{{ duckdns_user }}' was not found in system"
+    success_msg: "DuckDNS user '{{ duckdns_user }}' exists"
+  tags: [install, user-group, verify]
+
+- name: Verify DuckDNS user is in correct group
+  ansible.builtin.assert:
+    that:
+      - duckdns_user_getent.ansible_facts.getent_passwd[duckdns_user][2] == duckdns_group_getent.ansible_facts.getent_group[duckdns_group][1]
+    fail_msg: "DuckDNS user '{{ duckdns_user }}' is not in group '{{ duckdns_group }}'"
+    success_msg: "DuckDNS user '{{ duckdns_user }}' is correctly assigned to group '{{ duckdns_group }}'"
+  tags: [install, user-group, verify]
+
+- name: Add default user "{{ vault_default_user_name }}" to DuckDNS group "{{ duckdns_group }}"
+  ansible.builtin.user:
+    name: "{{ vault_default_user_name }}"
+    groups: "{{ duckdns_group }}"
+    append: true
+  become: true
+  tags: [install, user-group]
+
+
+
+# =============================================================================
+## 05. SETUP SYSTEMD FOR DUCKDNS
+# This section sets up the systemd unit file for the service
+# -----------------------------------------------------------------------------
+
+- name: Install required packages for DuckDNS
+  ansible.builtin.package:
+    name:
+      - curl
+    state: present
+  become: true
+  tags: [install]
+
+- name: Deploy DuckDNS update script
+  ansible.builtin.template:
+    src: templates/duckdns-update.sh.j2
+    dest: "{{ duckdns_update_script }}"
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  tags: [install]
+
+- name: Deploy DuckDNS systemd service file
+  ansible.builtin.template:
+    src: templates/duckdns-systemd.service.j2
+    dest: "{{ duckdns_systemd_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, systemd]
+
+- name: Verify DuckDNS systemd service config is valid
+  ansible.builtin.command: "systemd-analyze verify {{ duckdns_systemd_file }}"
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  tags: [install, systemd, verify]
+
+- name: Reload systemd and start DuckDNS service
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    name: "{{ duckdns_systemd_name }}.service"
+    enabled: true
+    state: restarted
+  become: true
+  tags: [install, systemd]
+
+- name: Get status of DuckDNS systemd service
+  ansible.builtin.systemd:
+    name: "{{ duckdns_systemd_name }}.service"
+  register: duckdns_service_status
+  changed_when: false
+  failed_when: false
+  tags: [install, systemd, verify]
+
+- name: Assert DuckDNS systemd service ran successfully
+  ansible.builtin.assert:
+    that:
+      - duckdns_service_status.status.Result == "success"
+      - duckdns_service_status.status.ActiveState in ["inactive", "active"]
+    success_msg: "DuckDNS systemd service '{{ duckdns_systemd_name }}' ran successfully."
+    fail_msg: "DuckDNS systemd service '{{ duckdns_systemd_name }}' did NOT run successfully."
+  tags: [install, systemd, verify]
+
+- name: Deploy DuckDNS systemd timer file
+  ansible.builtin.template:
+    src: templates/duckdns-systemd.timer.j2
+    dest: "{{ duckdns_timer_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, systemd]
+
+- name: Enable and start DuckDNS timer
+  ansible.builtin.systemd:
+    name: "{{ duckdns_systemd_name }}.timer"
+    state: started
+    enabled: true
+  become: true
+  tags: [install, systemd]
+
+- name: Verify DuckDNS timer is active
+  ansible.builtin.systemd:
+    name: "{{ duckdns_systemd_name }}.timer"
+  register: duckdns_timer_status
+  changed_when: false
+  failed_when: false
+  become: true
+  tags: [install, systemd, verify]
+
+- name: Assert DuckDNS timer is running
+  ansible.builtin.assert:
+    that:
+      - duckdns_timer_status.status.ActiveState == "active"
+    success_msg: "✅ DuckDNS timer is active and running."
+    fail_msg: "❌ DuckDNS timer is NOT active. Check systemd logs."
+  tags: [install, systemd, verify]
+
+
+
+# =============================================================================
+## 06. DUCKDNS MONITORING
+# This section inserts the Alloy log component into config.alloy
+# -----------------------------------------------------------------------------
+
+- name: Insert DuckDNS Journald component to config.alloy
+  ansible.builtin.blockinfile:
+    path: /etc/alloy/config.alloy
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ duckdns_systemd_name }} logs"
+    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+    block: "{{ lookup('template', 'templates/duckdns-config.alloy.j2') }}"
+  become: true
+  notify:
+    - Alloy Restart
+  tags: [install, monitoring]
+
+
+
+# =============================================================================
+## 04. HEALTH CHECK DUCKDNS
+# This section performs healt checks to confirm sercice
+# -----------------------------------------------------------------------------
+
+- name: Get current public IP address
+  ansible.builtin.uri:
+    url: https://api.ipify.org
+    return_content: true
+  register: duckdns_public_ip
+  tags: [install, verify, healtcheck]
+
+- name: Get DuckDNS reported IP address
+  ansible.builtin.uri:
+    url: "https://www.duckdns.org/update?domains={{ duckdns_domain }}&token={{ duckdns_token }}&verbose=true"
+    return_content: true
+  register: duckdns_status
+  tags: [install, verify, healtcheck]
+
+- name: Debug DuckDNS API response
+  ansible.builtin.debug:
+    var: duckdns_status.content
+  tags: [debug]
+
+- name: Parse DuckDNS reported IP address
+  ansible.builtin.set_fact:
+    duckdns_reported_ip: "{{ duckdns_status.content.split('\n')[1] | trim }}"
+  tags: [install, verify, healtcheck]
+
+- name: Assert DuckDNS IP matches current public IP
+  ansible.builtin.assert:
+    that:
+      - duckdns_reported_ip == duckdns_public_ip.content
+    success_msg: "DuckDNS IP address ({{ duckdns_reported_ip }}) matches current public IP ({{ duckdns_public_ip.content }})."
+    fail_msg: "DuckDNS IP address ({{ duckdns_reported_ip }}) does NOT match current public IP ({{ duckdns_public_ip.content }})."
+  tags: [install, verify, healtcheck]
+
+
+
+# =============================================================================
+## 05. UNINSTALL DUCKDNS
+# This section unistalls the service
+# -----------------------------------------------------------------------------
+
+- name: Stop DuckDNS timer
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: "{{ duckdns_systemd_name }}.timer"
+    state: stopped
+    enabled: false
+  become: true
+  tags: [uninstall]
+
+- name: Stop DuckDNS service
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.systemd:
+    name: "{{ duckdns_systemd_name }}.service"
+    state: stopped
+    enabled: false
+  become: true
+  tags: [uninstall]
+
+- name: Remove DuckDNS systemd service file
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ duckdns_systemd_file }}"
+    state: absent
+  become: true
+  tags: [uninstall]
+
+- name: Remove DuckDNS systemd timer file
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ duckdns_timer_file }}"
+    state: absent
+  become: true
+  tags: [uninstall]
+
+- name: Remove DuckDNS update script
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.file:
+    path: "{{ duckdns_update_script }}"
+    state: absent
+  become: true
+  tags: [uninstall]
+
+- name: Reload systemd daemon
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.command: systemctl daemon-reload
+  become: true
+  tags: [uninstall]
+
+- name: Remove DuckDNS user
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.user:
+    name: "{{ duckdns_user }}"
+    state: absent
+    remove: true
+  become: true
+  tags: [uninstall]
+
+- name: Remove DuckDNS group
+  when: uninstall_confirmation.user_input | bool
+  ansible.builtin.group:
+    name: "{{ duckdns_group }}"
+    state: absent
+  become: true
+  tags: [uninstall]

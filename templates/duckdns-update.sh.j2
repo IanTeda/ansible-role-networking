@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+# This script updates a DuckDNS domain with the current public IP address,
+# but only sends the update if the IP has changed since the last request.
+
+set -euo pipefail
+
+command -v dig >/dev/null 2>&1 || { echo "dig not found"; exit 3; }
+command -v curl >/dev/null 2>&1 || { echo "curl not found"; exit 3; }
+
+DUCKDNS_DOMAIN="{{ duckdns_domain }}"
+DUCKDNS_TOKEN="{{ duckdns_token }}"
+SYSTEMD_USER=$(whoami)
+LAST_IP_FILE="/var/lib/duckdns/last_ip"
+
+# Check variables are set
+if [ -z "$DUCKDNS_DOMAIN" ] || [ -z "$DUCKDNS_TOKEN" ]; then
+    MSG="[$SYSTEMD_USER] DuckDNS domain or token not configured."
+    logger -t duckdns-update "$MSG"
+    echo "$MSG"
+    exit 4
+fi
+
+# Get current public ip address
+CURRENT_IP=$(curl -s https://api.ipify.org)
+if [ -z "$CURRENT_IP" ]; then
+    MSG="[$SYSTEMD_USER] Failed to get current IP address."
+    logger -t duckdns-update "$MSG"
+    echo "$MSG"
+    exit 1
+fi
+
+# Ensure the storage directory exists
+mkdir -p "$(dirname "$LAST_IP_FILE")"
+
+# Read the last IP if the file exists
+if [ -f "$LAST_IP_FILE" ]; then
+    LAST_IP=$(cat "$LAST_IP_FILE")
+else
+    LAST_IP=""
+fi
+
+# If Current ip does not equal last ip update duckdns
+if [ "$CURRENT_IP" != "$LAST_IP" ]; then
+    RESPONSE=$(curl -s "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=${CURRENT_IP}")
+    MSG="[$SYSTEMD_USER] DuckDNS update response: $RESPONSE (IP: $CURRENT_IP)"
+    logger -t duckdns-update "$MSG"
+    echo "$MSG"
+    echo "$CURRENT_IP" > "$LAST_IP_FILE"
+else
+    MSG="[$SYSTEMD_USER] IP unchanged ($CURRENT_IP), no DuckDNS update sent."
+    logger -t duckdns-update "$MSG"
+    echo "$MSG"
+fi

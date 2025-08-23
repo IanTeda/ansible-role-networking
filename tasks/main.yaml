@@ -70,6 +70,11 @@
       tags:
         - i2pd
 
+    - name: Install and Configure DuckDNS
+      ansible.builtin.include_tasks: duckdns-debian.yaml
+      tags:
+        - duckdns
+
 
 
 ## RedHat family tasks block
