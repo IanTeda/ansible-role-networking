@@ -34,6 +34,8 @@
 [Unit]
 Description="Custom bash script to update the dynamic VPN server configuration in /etc/ufw/before.rules"
 After=network-online.target
+PartOf=openvpn@client.service
+SyslogIdentifier=ovpn-client
 
 [Service]
 Type=oneshot
@@ -41,9 +43,4 @@ User=root
 Group=root
 
 # Update the VPN server configuration
-ExecStart={{ vpn_server_dynamic_update_script }} -q
-
-# Log to systemd journal
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vpn_server_dynamic_update
+ExecStart={{ vpn_server_dynamic_update_script }}

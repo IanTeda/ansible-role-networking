@@ -1,4 +1,3 @@
----
 # =============================================================================
 # OpenVPN + VPN Kill Switch - Ansible Tasks
 # =============================================================================
@@ -37,11 +36,14 @@
 #   - Update the dynamic ip address for the vpn server: sudo bash /usr/local/sbin/vpn-dynamic-server-update.sh
 # =============================================================================
 
+---
+
+# =============================================================================
 ## 00. SET OPENVPN ANSIBLE FACTS
 # This makes it easier to read the ansible tasks
 # -----------------------------------------------------------------------------
 
-- name: Set OpenVPN role facts
+- name: Set OpenVPN facts
   ansible.builtin.set_fact:
     vpn_client_user: "{{ networking_openvpn_client.user }}"
     vpn_client_group: "{{ networking_openvpn_client.group }}"
@@ -52,12 +54,8 @@
     vpn_client_config_download: "{{ networking_openvpn_client.config_download }}"
     vpn_client_server_hostname: "{{ networking_openvpn_client.vpn_server }}"
     vpn_server_dynamic_update_script: "/usr/local/sbin/vpn-dynamic-server-update.sh"
-  tags:
-    - install
-    - config
-    - monitoring
-    - healthcheck
-    - uninstall
+    vpn_dns_servers: "{{ networking_openvpn_client.dns_servers }}"
+  tags: [always]
 
 - name: Display OpenVPN variables for debugging
   ansible.builtin.debug:
@@ -75,11 +73,13 @@
       - "Fact -> vpn_client_binary_path: {{ vpn_client_binary_path }}"
       - "Fact -> vpn_client_systemd_name: {{ vpn_client_systemd_name }}"
       - "Fact -> vpn_client_config_download: {{ vpn_client_config_download }}"
+      - "Fact -> vpn_client_server_hostname: {{ vpn_client_server_hostname }}"
+      - "Fact -> vpn_server_dynamic_update_script: {{ vpn_server_dynamic_update_script }}"
   tags:
     - debug
 
 
-
+# =============================================================================
 ## 01. SHUTDOWN OPENVPN SERVICE AND DISABLE UFW
 # This section ensures that the service is stopped before any config changes and
 # updates are applied to prevent conflict issues.
@@ -90,18 +90,13 @@
     state: disabled
   become: true
   changed_when: false
-  tags:
-    - install
-    - config
-    - restore
+  tags: [install]
 
 - name: Check if OpenVPN service exists
   ansible.builtin.stat:
     path: "/lib/systemd/system/{{ vpn_client_systemd_name }}.service"
   register: service_file
-  tags:
-    - install
-    - config
+  tags: [install]
 
 - name: Ensure OpenVPN service is stopped before modifying
   ansible.builtin.systemd:
@@ -110,12 +105,11 @@
   become: true
   failed_when: false
   when: service_file.stat.exists
-  tags:
-    - install
-    - config
+  tags: [install]
 
 
 
+# =============================================================================
 ## 02. SET UP OPENVPN USER & CREATE SERVICE DIRECTORIES
 # This section sets up the system user and group to run the service and create 
 # all the directories for the service
@@ -124,6 +118,8 @@
 # Nil: This is handled by the apt package manager
 
 
+
+# =============================================================================
 ## 03. DOWNLOAD OPENVPN PACKAGE
 # This section adds the openvpn repository and downloads the package
 # -----------------------------------------------------------------------------
@@ -136,11 +132,11 @@
     state: present
     update_cache: true
   become: true
-  tags:
-    - install
+  tags: [install]
 
 
 
+# ============================================================================
 ## 04. SETUP CONFIG FILE FOR OPENVPN
 # This section sets up the configuration files file for the service
 # -----------------------------------------------------------------------------
@@ -151,9 +147,7 @@
     dest: /tmp/vpn_client_configs.zip
     mode: '0644'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Ensure OpenVPN config directory exists
   ansible.builtin.file:
@@ -161,9 +155,7 @@
     state: directory
     mode: '0755'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Unzip OpenVPN configs
   ansible.builtin.unarchive:
@@ -171,9 +163,7 @@
     dest: "{{ vpn_client_config_dir }}/configs"
     remote_src: true
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Create OpenVPN auth file with VPN credentials
   ansible.builtin.copy:
@@ -185,9 +175,7 @@
     group: root
     mode: '0600'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Ensure OpenVPN client.conf uses auth-user-pass
   ansible.builtin.lineinfile:
@@ -196,20 +184,7 @@
     line: 'auth-user-pass {{ vpn_client_config_dir }}/server-auth.txt'
     state: present
   become: true
-  tags:
-    - install
-    - config
-
-# - name: Ensure OpenVPN config includes AES-256-CBC in data-ciphers
-#   ansible.builtin.lineinfile:
-#     path: "{{ vpn_client_config_dir }}/configs/{{ vpn_client_server_hostname }}.ovpn"
-#     regexp: '^data-ciphers'
-#     line: 'data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:AES-256-CBC'
-#     state: present
-#   become: true
-#   tags:
-#     - install
-#     - config
+  tags: [install, config]
 
 - name: Enable OpenVPN config "{{ vpn_client_server_hostname }}.ovpn" as /etc/openvpn/client.conf (symlink)
   ansible.builtin.file:
@@ -218,12 +193,11 @@
     state: link
     force: true
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 
 
+# =============================================================================
 ## 04. SETUP UFW KILL SWITCH
 # This section sets up the UFW VPN kill switch rules to block all traffic
 # that is not going through the VPN interface (tun0) and allows local network access.
@@ -234,68 +208,50 @@
     grep '^remote ' {{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn | awk '{print $2}' | head -n1
   register: vpn_server_hostname
   changed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Set VPN server hostname as Ansible fact
   ansible.builtin.set_fact:
     vpn_server_hostname_fact: "{{ vpn_server_hostname.stdout }}"
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Get VPN server port from client.conf
   ansible.builtin.shell: |
     grep '^remote ' {{ vpn_client_config_dir }}/configs/{{ networking_openvpn_client.vpn_server }}.ovpn | awk '{print $3}' | head -n1
   register: vpn_client_server_port
   changed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Resolve all VPN server IPs
   ansible.builtin.shell: |
     getent ahosts "{{ vpn_server_hostname.stdout }}" | awk '{print $1}' | sort -u
   register: vpn_client_server_ips_raw
   changed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch]
 
 - name: Set VPN server IPs as Ansible fact
   ansible.builtin.set_fact:
     vpn_client_server_ips: "{{ vpn_client_server_ips_raw.stdout_lines }}"
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch]
 
 - name: Set VPN server Port "{{ vpn_client_server_port.stdout }}" as Ansible fact
   ansible.builtin.set_fact:
     vpn_client_server_port: "{{ vpn_client_server_port.stdout }}"
   when: vpn_client_server_port.stdout != ''
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Get wired network interface name (excluding loopback and virtual)
   ansible.builtin.shell: |
     ip -o link show | awk -F': ' '{print $2}' | grep -E '^(en|eth)' | grep -v 'lo' | head -n1
   register: wired_interface
   changed_when: false
-  tags:
-    - debug
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Set wired network interface as Ansible fact
   ansible.builtin.set_fact:
     vpn_client_primary_network_interface: "{{ wired_interface.stdout }}"
   when: wired_interface.stdout != ''
-  tags:
-    - facts
-    - install
-    - config
+  tags: [install, kill-switch, server-updater]
 
 - name: Display VPN Kill Switch Facts
   ansible.builtin.debug:
@@ -303,8 +259,7 @@
       - "Fact -> vpn_client_server_ips: {{ vpn_client_server_ips }}"
       - "Fact -> vpn_client_server_port: {{ vpn_client_server_port }}"
       - "Fact -> vpn_client_primary_network_interface: {{ vpn_client_primary_network_interface }}"
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Backup original UFW before.rules if not already backed up
   ansible.builtin.copy:
@@ -316,9 +271,7 @@
     mode: '0644'
     force: false
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch]
 
 - name: Deploy UFW kill switch rules file
   ansible.builtin.template:
@@ -328,9 +281,7 @@
     group: root
     mode: '0644'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, kill-switch]
 
 - name: Restore original UFW before.rules from backup
   ansible.builtin.copy:
@@ -342,10 +293,79 @@
     remote_src: true
     force: true
   become: true
-  tags:
-    - never
-    - uninstall
-    - restore
+  tags: [never, uninstall, restore]
+
+
+
+# =============================================================================
+## 04. SETUP VPN SERVER UPDATER
+# This section sets up a script and service to update the PIA server IPs dynamically.
+# This is needed for the VPN kill switch to allow access to the server when tun0
+# is down.
+# -----------------------------------------------------------------------------
+
+- name: Deploy VPN server update script
+  ansible.builtin.template:
+    src: templates/vpn-dynamic-server-update.sh.j2
+    dest: "{{ vpn_server_dynamic_update_script }}"
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+  tags: [install, server-updater]
+
+- name: Deploy VPN server update service
+  ansible.builtin.template:
+    src: templates/vpn-server-update.service.j2
+    dest: /lib/systemd/system/vpn-server-update.service
+    owner: root
+    group: root
+    mode: '0700'
+  tags: [install, server-updater]
+
+- name: Verify VPN server update service is valid
+  ansible.builtin.command: systemd-analyze verify /lib/systemd/system/vpn-server-update.service
+  register: systemd_verify
+  changed_when: false
+  failed_when: systemd_verify.rc != 0
+  become: true
+  tags: [install, server-updater]
+
+- name: Enable VPN server update service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: vpn-server-update.service
+    enabled: true
+    state: started
+  become: true
+  tags: [install, server-updater]
+
+- name: Deploy VPN server update timer
+  ansible.builtin.template:
+    src: templates/vpn-server-update.timer.j2
+    dest: /lib/systemd/system/vpn-server-update.timer
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+  tags: [install, server-updater]
+
+- name: Enable VPN server update timer
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: vpn-server-update.timer
+    enabled: true
+    state: started
+  become: true
+  tags: [install, server-updater]
+
+
+
+# =============================================================================
+## 04. SETUP VPN STATIC ROUTING
+# This section sets static routes for accessing client through the networks VPN
+# Not this VPN, but we need static routing because of the kill switch 
+# -----------------------------------------------------------------------------
 
 - name: Deploy static route for VPN clients
   ansible.builtin.template:
@@ -367,61 +387,6 @@
   tags:
     - install
     - config
-
-- name: Deploy VPN server update script
-  ansible.builtin.template:
-    src: templates/vpn-dynamic-server-update.sh.j2
-    dest: "{{ vpn_server_dynamic_update_script }}"
-    owner: root
-    group: root
-    mode: '0700'
-  become: true
-  tags: [install, config]
-
-- name: Deploy VPN server update service
-  ansible.builtin.template:
-    src: templates/vpn-server-update.service.j2
-    dest: /lib/systemd/system/vpn-server-update.service
-    owner: root
-    group: root
-    mode: '0700'
-  tags: [install, config, systemd]
-
-- name: Verify VPN server update service is valid
-  ansible.builtin.command: systemd-analyze verify /lib/systemd/system/vpn-server-update.service
-  register: systemd_verify
-  changed_when: false
-  failed_when: systemd_verify.rc != 0
-  become: true
-  tags: [install, config, systemd, verify]
-
-- name: Enable VPN server update service
-  ansible.builtin.systemd:
-    daemon_reload: true
-    name: vpn-server-update.service
-    enabled: true
-    state: started
-  become: true
-  tags: [install, config, systemd]
-
-- name: Deploy VPN server update timer"
-  ansible.builtin.template:
-    src: templates/vpn-server-update.timer.j2
-    dest: /lib/systemd/system/vpn-server-update.timer
-    owner: root
-    group: root
-    mode: '0700'
-  become: true
-  tags: [install, config, systemd]
-
-- name: Enable VPN server update timer
-  ansible.builtin.systemd:
-    daemon_reload: true
-    name: vpn-server-update.timer
-    enabled: true
-    state: started
-  become: true
-  tags: [install, config, systemd]
 
 - name: Ensure UFW is enabled
   community.general.ufw:
@@ -490,6 +455,55 @@
 
 
 
+# =============================================================================
+## SET UP VPN DNS Servers
+# This section configures the host to use the VPN DNS servers
+# ------------------------------------------------------------------------------
+
+- name: Install systemd-resolved for DNS management
+  ansible.builtin.package:
+    name: systemd-resolved
+    state: present
+  become: true
+  tags: [install, dns]
+
+- name: Ensure systemd-resolved is installed and enabled
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    enabled: true
+    state: started
+  become: true
+  tags: [install, dns]
+
+- name: Configure DNS servers in systemd-resolved
+  ansible.builtin.ini_file:
+    path: /etc/systemd/resolved.conf
+    section: Resolve
+    option: DNS
+    value: "{{ vpn_dns_servers }}"
+  become: true
+  tags: [install, dns]
+
+- name: Ensure /etc/resolv.conf is linked to systemd-resolved
+  ansible.builtin.file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+  become: true
+  tags: [install, dns]
+
+- name: Restart systemd-resolved to apply DNS changes
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted
+  become: true
+  tags: [install, dns]
+
+
+
+
+# =============================================================================
 ## HEALTH CHECKS
 # Confirm the operations of the openvpn & kill switch
 # ------------------------------------------------------------------------------
@@ -499,11 +513,7 @@
     name: openvpn@client
   register: openvpn_service_status
   become: true
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Assert OpenVPN is running
   ansible.builtin.assert:
@@ -511,33 +521,21 @@
       - openvpn_service_status.status.ActiveState == "active"
     fail_msg: "OpenVPN service is not running! Status: {{ openvpn_service_status.status.ActiveState }}"
     success_msg: "OpenVPN service is running successfully."
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Wait for VPN interface (tun0) to be up
   ansible.builtin.wait_for:
     path: /sys/class/net/tun0
     state: present
     timeout: 30
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
-- name: Assert VPN interface (tun0) is up
+- name: Check `ip link` to assert VPN interface (tun0) is up
   ansible.builtin.command: ip link show tun0
   register: tun0_status
   changed_when: false
   failed_when: tun0_status.rc != 0
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Assert VPN interface (tun0) is up (status check)
   ansible.builtin.assert:
@@ -545,20 +543,13 @@
       - tun0_status.rc == 0
     fail_msg: "VPN interface tun0 is not up! Status: {{ tun0_status.stdout }}"
     success_msg: "VPN interface tun0 is up and running."
-  tags:
-    - install
-    - config
-    - verify
+  tags: [install, verify, healthcheck]
 
 - name: Check UFW status
   ansible.builtin.command: ufw status
   register: ufw_status
   changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Assert UFW is enabled, else kill switch will not work
   ansible.builtin.assert:
@@ -566,35 +557,24 @@
       - "'Status: active' in ufw_status.stdout"
     fail_msg: "UFW is NOT enabled!"
     success_msg: "UFW is enabled and active."
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
-- name: Check external IP address of Ansible control node
+- name: Get external IP address of Ansible control node
   ansible.builtin.uri:
     url: https://api.ipify.org
     return_content: true
   register: host_external_ip
-  delegate_to: thinkpad
+  delegate_to: localhost
+  connection: local
   run_once: true
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
-- name: Check external IP address (should be VPN, not your ISP)
+- name: Get external IP address of VPN client (should be VPN, not your ISP)
   ansible.builtin.uri:
     url: https://api.ipify.org
     return_content: true
   register: external_ip
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Assert VPN is working (external IPs should be different)
   ansible.builtin.assert:
@@ -605,42 +585,11 @@
       - "VPN is working correctly."
       - "Control node external IP:             {{ host_external_ip.content }}"
       - "Client external IP (should be VPN):   {{ external_ip.content }}"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
-
-- name: Check if VPN interface (tun0) is up
-  ansible.builtin.command: ip link show tun0
-  register: tun0_status
-  failed_when: tun0_status.rc != 0
-  changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
-
-- name: Assert VPN interface (tun0) is up
-  ansible.builtin.assert:
-    that:
-      - tun0_status.rc == 0
-    fail_msg: "VPN interface tun0 is not up! Status: {{ tun0_status.stdout }}"
-    success_msg: "VPN interface tun0 is up and running."
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
 
 - name: Test VPN kill switch functionality
   become: true
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, verify, healthcheck]
   block:
     - name: Stop OpenVPN service to test kill switch
       ansible.builtin.systemd:

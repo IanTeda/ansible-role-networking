@@ -100,6 +100,7 @@ networking_openvpn_client:
   group: 'root'
   config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
   vpn_server: '{{ vault_vpn_server }}'
+  dns_servers: "209.222.18.218 209.222.18.222 1.1.1.1 9.9.9.9"           # List of DNS servers to use when VPN is active
 
 ## SSH Configuration
 networking_ssh:

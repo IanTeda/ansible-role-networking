@@ -8,12 +8,18 @@ VPN_HOSTNAME="{{ vpn_server_hostname_fact }}"               # The hostname of yo
 VPN_PORT="{{ vpn_client_server_port }}"                       # Set the PIA server port
 VPN_INTERFACE="{{ vpn_client_primary_network_interface }}"    # Your primary network interface (e.g., eth0, enp3s0)
 
+
+# Setup logger to use systemd journald with correct tag
+log_openvpn() {
+  echo "$@"
+}
+
 # 1. Resolve all current IPs for the PIA server
 VPN_IPS=$(dig +short "$VPN_HOSTNAME" | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
 
 # 2. If no IPs are resolved, exit with an error
 if [[ -z "$VPN_IPS" ]]; then
-  echo "Could not resolve IPs for $VPN_HOSTNAME"
+  log_openvpn "Could not resolve IPs for $VPN_HOSTNAME"
   exit 1
 fi
 
@@ -49,4 +55,4 @@ rm "$TMP_SNIPPET"
 
 ufw reload
 
-echo "UFW rules updated for VPN server $VPN_HOSTNAME ($VPN_IPS) on $VPN_INTERFACE:$VPN_PORT"
+log_openvpn "UFW rules updated for VPN server $VPN_HOSTNAME ($VPN_IPS) on $VPN_INTERFACE:$VPN_PORT"

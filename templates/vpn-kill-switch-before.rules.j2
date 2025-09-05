@@ -61,8 +61,14 @@
 # This allows the system to resolve DNS queries when tun0 is not up, such as getting
 # the VPN server IPs from the DNS. 
 # NOTE: Update with your VPN providers dns servers
--A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
 -A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.218 --dport 53 -j ACCEPT
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 209.222.18.222 --dport 53 -j ACCEPT
+
+# Allow cloudflare DNS server
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 1.1.1.1 --dport 53 -j ACCEPT
+
+# Allow Quad9 DNS Server
+-A ufw-before-output -o {{ vpn_client_primary_network_interface }} -p udp -d 9.9.9.9 --dport 53 -j ACCEPT
 
 ##-- Allow DHCP client to work (UDP 67/68)
 # This allows the system to obtain an IP address from the DHCP server.

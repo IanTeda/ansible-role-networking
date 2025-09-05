@@ -44,6 +44,7 @@
       ansible.builtin.include_tasks: vpn-debian.yaml
       tags:
         - vpn
+        - healthcheck
 
     - name: Install Certbot and Retrieve TLS Certificates
       ansible.builtin.include_tasks: lets-encrypt-debian.yaml
