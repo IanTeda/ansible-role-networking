@@ -11,7 +11,7 @@ VPN_INTERFACE="{{ vpn_client_primary_network_interface }}"    # Your primary net
 
 # Setup logger to use systemd journald with correct tag
 log_openvpn() {
-  echo "$@"
+  logger -t "vpn-dynamic-server-update" "$@"
 }
 
 # 1. Resolve all current IPs for the PIA server

@@ -1,12 +1,29 @@
 
 //-- Scrape the {{ vpn_client_systemd_name }} jornald entries and foward to the
 // openvpn processor for parsing
-loki.source.journal "openvpn" {
+loki.source.journal "openvpn_service" {
   matches = "_SYSTEMD_UNIT={{ vpn_client_systemd_name }}.service"
   relabel_rules = loki.relabel.systemd_journal.rules
-  forward_to = [loki.process.openvpn.receiver]
+  forward_to = [loki.relabel.openvpn_unify.receiver]
 }
 
+//-- Scrape the vpn-dynamic-server-update script journald entries
+loki.source.journal "vpn_dynamic_server_update" {
+  matches = "SYSLOG_IDENTIFIER=vpn-dynamic-server-update"
+  relabel_rules = loki.relabel.systemd_journal.rules
+  forward_to = [loki.relabel.openvpn_unify.receiver]
+}
+
+// Unify service labels for OpenVPN logs
+loki.relabel "openvpn_unify" {
+  rule {
+    source_labels = ["__service__"]
+    regex = ".*"
+    replacement = "openvpn"
+    target_label = "__service__"
+  }
+  forward_to = [loki.process.openvpn.receiver]
+}
 
 // Process the openvpn logs to extract useful fields and forward to the Loki 
 // write endpoint

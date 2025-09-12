@@ -57,37 +57,20 @@
     ssh_service_file: "/lib/systemd/system/ssh.service"
     ssh_port: "{{ networking_ssh.listen_port }}"
     ssh_listen_address: "{{ networking_ssh.listen_address }}"
-  tags:
-    - install
-    - config
-    - healthcheck
-    - uninstall
-    - monitoring
+  tags: [always]
 
 - name: Get wired network interface name (excluding loopback and virtual)
   ansible.builtin.shell: |
     ip -o link show | awk -F': ' '{print $2}' | grep -E '^(en|eth)' | grep -v 'lo' | head -n1
   register: wired_interface
   changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
-    - debug
-    - facts
+  tags: [always]
 
 - name: Set wired network interface as Ansible fact
   ansible.builtin.set_fact:
     ssh_primary_network_interface: "{{ wired_interface.stdout }}"
   when: wired_interface.stdout != ''
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
-    - debug
-    - facts
+  tags: [always]
 
 - name: Display ssh_primary_network_interface variables for debugging
   ansible.builtin.debug:
@@ -216,9 +199,7 @@
     mode: '0644'
     force: no
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, systemd]
 
 - name: "Deploy SSH service file to {{ ssh_service_file }}"
   ansible.builtin.template:
@@ -230,19 +211,14 @@
     backup: yes
   become: true
   notify: SSH Restart
-  tags:
-    - install
-    - config
+  tags: [install, systemd]
 
 - name: Verify SSH systemd service config is valid
   ansible.builtin.command: "systemd-analyze verify {{ ssh_service_file }}"
   register: systemd_verify
   changed_when: false
   failed_when: systemd_verify.rc != 0
-  tags:
-    - install
-    - config
-    - verify
+  tags: [install, systemd, verify]
 
 - name: Disable all update-motd.d scripts (removes execute permission)
   ansible.builtin.file:

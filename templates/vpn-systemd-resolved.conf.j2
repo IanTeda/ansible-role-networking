@@ -1,0 +1,33 @@
+[Resolve]
+# DNS servers preference (defaults include PIA, Cloudflare and Quad9). To
+# override, set `vpn_resolved_dns` in host_vars or inventory as a list, e.g.
+# vpn_resolved_dns: ["209.222.18.218", "209.222.18.219"]
+# Default order prefers PIA (so DNS queries go to PIA over the VPN), then
+# Cloudflare and Quad9 (IPv4 and IPv6 where available).
+DNS = {{ (vpn_resolved_dns | default([
+	"209.222.18.218",
+	"209.222.18.219",
+	"1.1.1.1",
+	"1.0.0.1",
+	"9.9.9.9",
+	"149.112.112.112",
+	"2606:4700:4700::1111",
+	"2606:4700:4700::1001",
+	"2620:fe::9",
+	"2620:fe::fe"
+]) ) | join(' ') }}
+# FallbackDNS can be left empty; if you want a separate fallback set it here.
+#FallbackDNS=
+# Recommended privacy/security settings
+DNSSEC=yes            # validate DNSSEC where available
+DNSOverTLS=yes        # try to use DoT for servers that support it
+MulticastDNS=no       # disable mDNS to avoid local name leakage
+LLMNR=no              # disable LLMNR to avoid multicast name resolution
+Cache=yes
+CacheFromLocalhost=no
+# The stub listener keeps systemd-resolved on 127.0.0.53 active. If you
+# instead manage /etc/resolv.conf directly (e.g., with resolvectl per-link),
+# set DNSStubListener=no and update resolv.conf accordingly.
+DNSStubListener=yes
+#ReadEtcHosts=yes
+#ResolveUnicastSingleLabel=no

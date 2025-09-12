@@ -54,7 +54,7 @@
     vpn_client_config_download: "{{ networking_openvpn_client.config_download }}"
     vpn_client_server_hostname: "{{ networking_openvpn_client.vpn_server }}"
     vpn_server_dynamic_update_script: "/usr/local/sbin/vpn-dynamic-server-update.sh"
-    vpn_dns_servers: "{{ networking_openvpn_client.dns_servers }}"
+    vpn_resolved_dns: "{{ networking_openvpn_client.dns_servers }}"
   tags: [always]
 
 - name: Display OpenVPN variables for debugging
@@ -476,11 +476,12 @@
   tags: [install, dns]
 
 - name: Configure DNS servers in systemd-resolved
-  ansible.builtin.ini_file:
-    path: /etc/systemd/resolved.conf
-    section: Resolve
-    option: DNS
-    value: "{{ vpn_dns_servers }}"
+  ansible.builtin.template:
+    src: templates/vpn-systemd-resolved.conf.j2
+    dest: /etc/systemd/resolved.conf
+    owner: root
+    group: root
+    mode: '0644'
   become: true
   tags: [install, dns]
 

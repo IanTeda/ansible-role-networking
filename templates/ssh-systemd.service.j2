@@ -49,7 +49,7 @@ Documentation=man:sshd(8) man:sshd_config(5)
 # This service requires systemd-networkd to be online before starting as we are 
 # biding to the network interface ip address for security reasons.
 # NOTE: A networkd inteface profile is required for @interface.service is being used
-After=systemd-networkd-wait-online@{{ ssh_primary_network_interface }}.service auditd.service
+After=network-online.target systemd-networkd-wait-online@{{ ssh_primary_network_interface }}.service auditd.service
 Wants=systemd-networkd-wait-online@{{ ssh_primary_network_interface }}.service
 # After=network-online.target auditd.service
 
