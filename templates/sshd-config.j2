@@ -113,8 +113,8 @@ StrictModes yes
 # Maximum authentication attempts per connection
 # Default: 6 | Current: 3
 # Note: Lower values reduce brute-force effectiveness.
-# Note: Need a hivher value because I am using a ssh-agent that tries keys until one works
-MaxAuthTries 9
+# Note: Need a higher value because I am using a ssh-agent that tries keys until one works
+MaxAuthTries 12
 
 # Maximum number of open sessions per network connection
 # Default: 10 | Current: 2
@@ -166,6 +166,7 @@ AllowUsers ian ansible
 # Important: If both AllowUsers and AllowGroups are specified, user must satisfy BOTH conditions
 AllowGroups {{ networking_ssh.user_access_group }}
 
+
 # Security Hardening
 # -----------------------------------------------------------------------------
 
@@ -176,7 +177,8 @@ PermitUserEnvironment no
 
 # Allow forwarding of SSH agent authentication
 # Default: yes | Current: no (disabled for security)
-# Note: Prevents agent forwarding attacks; disable unless specifically needed
+# Note: Prevents agent forwarding attacks; disable unless specifically needed.
+# Allowed for ssh-agent usage
 AllowAgentForwarding yes
 
 # Allow TCP port forwarding
@@ -221,6 +223,7 @@ UseDNS no
 # Default: varies | Current: LANG and LC_* variables allowed
 # Note: Permits proper locale handling for international users
 AcceptEnv LANG LC_*
+
 
 # Subsystem Configuration
 # -----------------------------------------------------------------------------

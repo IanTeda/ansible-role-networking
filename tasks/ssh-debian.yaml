@@ -75,14 +75,12 @@
 - name: Display ssh_primary_network_interface variables for debugging
   ansible.builtin.debug:
     var: ssh_primary_network_interface
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display networking/ssh variables for debugging
   ansible.builtin.debug:
     var: boilerplate_ssh
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display sshd facts for debugging
   ansible.builtin.debug:
@@ -93,21 +91,18 @@
       - "Fact -> ssh_config_file: {{ ssh_config_file }}"
       - "Fact -> ssh_systemd_name: {{ ssh_systemd_name }}"
       - "Fact -> ssh_service_file: {{ ssh_service_file }}"
-  tags:
-    - debug
+  tags: [debug]
 
 
 ## 01. INSTALL AND CONFIGURE SSHD
 # This installs and configures the SSH daemon with hardening measures
 # -----------------------------------------------------------------------------
 
-- name: Ensure UFW is disabled to avoid lock out
+- name: Ensure UFW is disabled to avoid lock out during config
   community.general.ufw:
     state: disabled
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Ensure openssh-server and hardening packages are installed
   ansible.builtin.apt:
@@ -118,17 +113,14 @@
     state: present
     update_cache: yes
   become: true
-  tags:
-    - install
+  tags: [never]
 
 - name: Create ssh_users group "{{ networking_ssh.user_access_group }}"
   ansible.builtin.group:
     name: "{{ networking_ssh.user_access_group }}"
     state: present
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Add users to "{{ networking_ssh.user_access_group }}" group
   ansible.builtin.user:
@@ -137,9 +129,7 @@
     append: yes
   loop: "{{ networking_ssh.user_access_list }}"
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Backup original sshd_config
   ansible.builtin.copy:
@@ -151,9 +141,7 @@
     mode: '0644'
     force: false
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: "Deploy SSHD config file to {{ ssh_config_file }}"
   ansible.builtin.template:
@@ -164,9 +152,7 @@
     mode: '0644'
     backup: yes
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Verify SSH configuration syntax
   ansible.builtin.command: sshd -t -f {{ ssh_config_file }}
@@ -174,20 +160,17 @@
   changed_when: false
   failed_when: sshd_config_check.rc != 0
   become: true
-  tags:
-    - install
-    - config
-    - verify
+  tags: [install, config, verify]
 
-- name: Insert I2PD Alloy block to config.alloy from template
-  ansible.builtin.blockinfile:
-    path: /etc/alloy/config.alloy
-    marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ ssh_systemd_name }} logs"
-    insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
-    block: "{{ lookup('template', 'templates/ssh-alloy-block.alloy.j2') }}"
-  become: true
-  notify: Alloy Restart
-  tags: [install, config, monitoring]
+# - name: Insert SSH Alloy block to config.alloy from template
+#   ansible.builtin.blockinfile:
+#     path: /etc/alloy/config.alloy
+#     marker: "// {mark} ANSIBLE MANAGED BLOCK: {{ ssh_systemd_name }} logs"
+#     insertbefore: "//////////////////////////// ADD ABOVE THE LINE ///////////////////////////////"
+#     block: "{{ lookup('template', 'templates/ssh-alloy-block.alloy.j2') }}"
+#   become: true
+#   notify: Alloy Restart
+#   tags: [install, config, monitoring]
 
 - name: Backup original ssh.service file
   ansible.builtin.copy:
@@ -228,9 +211,7 @@
     - /etc/update-motd.d/*
   ignore_errors: true
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Disable /etc/motd directory (remove execute permission)
   ansible.builtin.copy:
@@ -240,9 +221,7 @@
     group: root
     mode: '0644'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Deploy SSH UFW application profile "/etc/ufw/applications.d/ssh"
   ansible.builtin.template:
@@ -252,18 +231,14 @@
     owner: root
     group: root
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Reload UFW SSH application profiles
   ansible.builtin.command: "ufw app update ssh"
   become: true
   changed_when: false
   failed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Allow SSH through UFW from local networks at number 1
   ansible.builtin.ufw:
@@ -273,10 +248,7 @@
     src: "{{ item }}"
   loop: "{{ networking_networks.local }}"
   become: true
-  tags:
-    - install
-    - config
-    - firewall
+  tags: [install, config, firewall]
 
 - name: Ensure SSH service is enabled and restarted
   ansible.builtin.service:
@@ -284,17 +256,13 @@
     state: restarted
     enabled: yes
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Ensure UFW is enabled
   community.general.ufw:
     state: enabled
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Add SSHD logs journal block to config.alloy from file
   ansible.builtin.blockinfile:
@@ -304,8 +272,7 @@
     block: "{{ lookup('file', 'files/sshd-config-block.alloy') }}"
   become: true
   notify: Alloy Restart
-  tags:
-    - alloy
+  tags: [alloy]
 
 - name: Verify Alloy configuration file is valid
   ansible.builtin.command: "/usr/local/bin/alloy validate /etc/alloy/config.alloy"
@@ -313,8 +280,7 @@
   changed_when: false
   failed_when: alloy_config_verify.rc != 0
   become: true
-  tags:
-    - alloy
+  tags: [alloy]
 
 
 
@@ -326,33 +292,21 @@
   register: ssh_service_status
   changed_when: false
   failed_when: ssh_service_status.stdout.strip() != "active"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Verify SSH is listening on configured port
   ansible.builtin.wait_for:
     port: "{{ networking_ssh.listen_port }}"
     host: "{{ networking_ssh.listen_address }}"
     timeout: 10
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Verify SSH users group exists
   ansible.builtin.command: getent group {{ networking_ssh.user_access_group }}
   register: ssh_group_check
   changed_when: false
   failed_when: ssh_group_check.rc != 0
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Verify users are in SSH group
   ansible.builtin.command: groups {{ item }}
@@ -360,22 +314,14 @@
   changed_when: false
   failed_when: networking_ssh.user_access_group not in user_groups_check.stdout
   loop: "{{ networking_ssh.user_access_list }}"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Verify password authentication is disabled
   ansible.builtin.command: grep '^PasswordAuthentication no' /etc/ssh/sshd_config
   register: password_auth_check
   changed_when: false
   failed_when: password_auth_check.rc != 0
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Verify root login is disabled
   ansible.builtin.lineinfile:
@@ -386,22 +332,14 @@
   check_mode: yes
   register: root_login_check
   failed_when: root_login_check.changed
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Check SSH configuration for common hardening settings
   ansible.builtin.command: grep -E "^(MaxAuthTries|MaxSessions|ClientAliveInterval)" /etc/ssh/sshd_config
   register: ssh_hardening_check
   changed_when: false
   failed_when: ssh_hardening_check.rc != 0
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Display SSH hardening summary
   ansible.builtin.debug:
@@ -412,8 +350,4 @@
       - "  - Password Auth: Disabled"
       - "  - Root Login: Disabled"
       - "  - SSH Port: {{ networking_ssh.listen_port }} (listening)"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]

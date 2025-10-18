@@ -31,7 +31,7 @@
     ufw_before_rules_file: "/etc/ufw/before.rules"
     ufw_binary_path: "/usr/sbin/ufw"
     ufw_systemd_name: "ufw"
-    ufw_primary_network_interface: "{{ networking_networks.primary_network_interface }}"
+    ssh_port: "{{ networking_ssh.listen_port }}"
   tags:
     - install
     - config
@@ -54,7 +54,6 @@
       - "Fact -> ufw_before_rules_file: {{ ufw_before_rules_file }}"
       - "Fact -> ufw_binary_path: {{ ufw_binary_path }}"
       - "Fact -> ufw_systemd_name: {{ ufw_systemd_name }}"
-      - "Fact -> ufw_primary_network_interface: {{ ufw_primary_network_interface }}"
   tags:
     - debug
 
@@ -145,17 +144,13 @@
     state: started
     enabled: true
   become: true
-  tags:
-    - install
-    - config
+  tags: [always]
 
 - name: Ensure UFW is disabled to avoid lock out
   community.general.ufw:
     state: disabled
   become: true
-  tags:
-    - install
-    - config
+  tags: [always]
 
 - name: Restore default rules from package defaults in "/usr/share/ufw/"
   ansible.builtin.copy:
@@ -176,9 +171,7 @@
     - ufw.conf
     - user6.rules
     - user.rules
-  tags:
-    - install
-    - config
+  tags: [restore]
 
 - name: Allow all traffic from localhost
   community.general.ufw:
@@ -187,9 +180,7 @@
     comment: "ALLOW ALL traffic from LOCALHOST"
   become: true
   notify: UFW Restart 
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 
 - name: Deploy SSH application profile
@@ -200,18 +191,14 @@
     group: root
     mode: '0644'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Reload UFW SSH application profiles
   ansible.builtin.command: "ufw app update ssh"
   become: true
   changed_when: false
   failed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Allow SSH connections - anti lockout
   community.general.ufw:
@@ -222,27 +209,20 @@
   loop: "{{ networking_networks.local }}"
   become: true
   notify: UFW Restart 
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Reload UFW to apply changes
   ansible.builtin.command: ufw reload
   become: true
   changed_when: false
-  tags:
-    - install
-    - config
-    - reload
+  tags: [install, config]
 
 - name: Enable UFW and ensure it is running
   community.general.ufw:
     state: enabled
     policy: deny
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Remove UFW config folder
   when: uninstall_confirmation.user_input | bool
@@ -252,9 +232,7 @@
   loop:
     - { path: "/etc/ufw",   mode: "u=rwx,g=rw,o=" }
   become: true
-  tags:
-    - never 
-    - uninstall
+  tags: [never, uninstall]
 
 
 ## VERIFICATIONS & HEALTH CHECKS
@@ -266,60 +244,36 @@
   register: ufw_status
   changed_when: false
   failed_when: "'Status: active' not in ufw_status.stdout"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Ensure UFW default policy is deny incoming
   ansible.builtin.command: ufw status verbose
   register: ufw_policy
   changed_when: false
   failed_when: "'Default: deny (incoming)' not in ufw_policy.stdout"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Ensure localhost is allowed
   ansible.builtin.command: ufw status
   register: ufw_localhost
   changed_when: false
   failed_when: "'127.0.0.1' not in ufw_localhost.stdout"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Ensure ANTI LOCKOUT is allowed
   ansible.builtin.command: ufw status
   register: ufw_localhost
   changed_when: false
   failed_when: "'ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT' not in ufw_localhost.stdout"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Display UFW status for review
   ansible.builtin.command: ufw status verbose
   register: ufw_status_verbose
   changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Show UFW status output
   ansible.builtin.debug:
     var: ufw_status_verbose.stdout
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
