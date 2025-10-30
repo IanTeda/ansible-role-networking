@@ -1,0 +1,232 @@
+---
+# UniFi Network Application Installation for Debian
+# Based on Glenn R. UniFi Easy Installation Script
+#
+# https://kevinpwhite.com/blog/how-to-install-mongodb-70-and-unifi-network-server-on-debian-12-bookworm/
+# https://vpsie.com/knowledge-base/how-to-setup-self-hosted-debian-12-unifi-controller/
+# https://blog.eldernode.com/install-unifi-controller-on-debian/
+# https://www.hostifi.com/blog/how-to-install-unifi-controller-on-debian
+
+## 00. SET UNIFI ANSIBLE FACTS
+# This makes it easier to read the ansible tasks
+# -----------------------------------------------------------------------------
+
+- name: Set UniFi facts
+  ansible.builtin.set_fact:
+    unifi_user: "{{ networking_unifi.user }}"
+    unifi_group: "{{ networking_unifi.group }}"
+    unifi_systemd_name: "{{ networking_unifi.user }}"
+    unifi_port: "{{ networking_unifi.port }}"
+    unifi_release: "{{ networking_unifi.release }}"
+  tags: [always]
+
+- name: Set UniFi directory facts
+  ansible.builtin.set_fact:
+    unifi_home_dir: "/opt/{{ unifi_systemd_name }}"
+    unifi_config_dir: "/etc/{{ unifi_systemd_name }}"
+    unifi_data_dir: "{{ networking_unifi.data_dir }}/{{ unifi_systemd_name }}"
+    unifi_src_dir: "/opt/{{ unifi_systemd_name }}/src-{{ unifi_release }}"
+  tags: [always]
+
+- name: Set UniFi file facts
+  ansible.builtin.set_fact:
+    unifi_download_url: "https://github.com/gethomepage/homepage/archive/refs/tags/{{ unifi_release }}.tar.gz"
+    unifi_download_file: "/tmp/unifi.tar.gz"
+    unifi_config_file: "{{ unifi_config_dir }}/{{ unifi_systemd_name }}.conf"
+    unifi_service_file: "/lib/systemd/system/{{ unifi_systemd_name }}.service"
+    unifi_ufw_profile_file: "/etc/ufw/applications.d/{{ unifi_systemd_name }}"
+    unifi_nginx_config_file: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ unifi_systemd_name }}-location.conf"
+    unifi_hostname: "{{ networking_unifi.hostname }}"
+    unifi_allowed_hosts: "{{ networking_unifi.allowed_hosts }}"
+    unifi_title: "{{ networking_unifi.title }}"
+    unifi_theme: "{{ networking_unifi.theme }}"
+    unifi_description: "{{ networking_unifi.description }}"
+  tags: [always]
+
+- name: Display UniFi variables for debugging
+  ansible.builtin.debug:
+    var: networking_unifi
+  tags: [debug]
+
+- name: Display UniFi facts for debugging
+  ansible.builtin.debug:
+    msg:
+      - "Fact -> unifi_user: {{ unifi_user }}"
+      - "Fact -> unifi_group: {{ unifi_group }}"
+      - "Fact -> unifi_home_dir: {{ unifi_home_dir }}"
+      - "Fact -> unifi_config_dir: {{ unifi_config_dir }}"
+      - "Fact -> unifi_config_file: {{ unifi_config_file }}"
+      - "Fact -> unifi_data_dir: {{ unifi_data_dir }}"
+      - "Fact -> unifi_systemd_name: {{ unifi_systemd_name }}"
+      - "Fact -> unifi_download_url: {{ unifi_download_url }}"
+  tags: [debug]
+
+- name: Confirm UniFi uninstallation
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: UniFi Uninstallation Confirmation ⚠️
+
+      You are about to completely uninstall the UniFi service from this system.
+      
+      Are you sure you want to proceed with the uninstallation? (true/no)
+  register: uninstall_confirmation
+  tags: [never, uninstall]
+
+- name: Uninstallation Aborted
+  ansible.builtin.fail:
+    msg: |
+      🛑 Uninstallation aborted by user
+      
+      The Nginx service remains installed and operational.
+      No changes have been made to the system.
+  when: not (uninstall_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+  
+
+## 03. DOWNLOAD, COMPILE, INSTALL & VERIFY UNIFI
+# This section downloads any source or binary files, compiles if needs be and installs
+# into the `/usr/local/bin/`
+# -----------------------------------------------------------------------------
+
+- name: Install required system packages
+  ansible.builtin.include.apt:
+    name:
+      - curl
+      - wget
+      - gnupg
+      - apt-transport-https
+      - ca-certificates
+      - lsb-release
+      - software-properties-common
+    state: present
+    update_cache: true
+  tags: [install]
+
+- name: Create apt keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Download UniFi repository GPG key
+  get_url:
+    url: https://dl.ui.com/unifi/unifi-repo.gpg
+    dest: /etc/apt/keyrings/unifi-repo.gpg
+    mode: '0644'
+
+- name: Add UniFi repository (DEB822 format)
+  copy:
+    dest: /etc/apt/sources.list.d/100-ubnt-unifi.sources
+    content: |
+      Types: deb
+      URIs: https://www.ui.com/downloads/unifi/debian
+      Suites: unifi-9.5
+      Components: ubiquiti
+      Signed-By: /etc/apt/keyrings/unifi-repo.gpg
+      Architectures: amd64
+    mode: '0644'
+
+- name: Update apt cache after adding repository
+  apt:
+    update_cache: true
+
+- name: Install UniFi Network Application
+  apt:
+    name: unifi
+    state: present
+
+- name: Ensure UniFi service is started and enabled
+  systemd:
+    name: unifi
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for UniFi to start up
+  wait_for:
+    port: 8443
+    timeout: 300
+    delay: 10
+
+- name: Check UniFi service status
+  uri:
+    url: https://localhost:8443/status
+    validate_certs: false
+    timeout: 30
+  register: unifi_status
+  failed_when: false
+
+- name: Display UniFi installation status
+  debug:
+    msg: |
+      UniFi Network Application installation completed.
+      Web UI should be available at: https://{{ ansible_default_ipv4.address }}:8443
+      Status check result: {{ unifi_status.status if unifi_status.status is defined else 'Service not responding yet' }}
+
+- name: Install UFW if not present
+  apt:
+    name: ufw
+    state: present
+
+- name: Allow SSH port (22/tcp) in UFW
+  ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+
+- name: Allow UniFi management port (8443/tcp)
+  ufw:
+    rule: allow
+    port: '8443'
+    proto: tcp
+
+- name: Allow UniFi device inform port (8080/tcp)
+  ufw:
+    rule: allow
+    port: '8080'
+    proto: tcp
+
+- name: Allow UniFi STUN port (3478/udp)
+  ufw:
+    rule: allow
+    port: '3478'
+    proto: udp
+
+- name: Allow UniFi discovery port (10001/udp)
+  ufw:
+    rule: allow
+    port: '10001'
+    proto: udp
+
+- name: Allow UniFi mobile speedtest port (6789/tcp)
+  ufw:
+    rule: allow
+    port: '6789'
+    proto: tcp
+
+- name: Enable UFW firewall
+  ufw:
+    state: enabled
+
+- name: Update system packages
+  apt:
+    upgrade: dist
+    update_cache: true
+
+- name: Install OpenJDK if not present
+  apt:
+    name: openjdk-17-jre-headless
+    state: present
+
+- name: Check if MongoDB is needed (for older UniFi versions)
+  command: dpkg -l | grep -q mongodb
+  register: mongodb_check
+  failed_when: false
+  changed_when: false
+
+- name: Install MongoDB if required
+  apt:
+    name: mongodb
+    state: present
+  when: mongodb_check.rc != 0

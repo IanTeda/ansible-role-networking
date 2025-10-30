@@ -1,4 +1,3 @@
-
 # Variables: Define your domain, email, and DNS provider details.
 # Tasks:
 # Install necessary Python libraries.
@@ -44,38 +43,22 @@
     lets_encrypt_nginx_tls_dir: "/etc/nginx/tls"
     lets_encrypt_renew_service: "lets-encrypt-renew"
     lets_encrypt_user: "{{ networking_lets_encrypt.user }}"
-  tags:
-    - certbot
-    - config
-    - directories
-    - healthcheck
-    - group
-    - install
-    - nginx
-    - systemd
-    - tls
-    - uninstall
-    - user
-    - user_group
-    - verify
+  tags: [always]
 
 - name: Display Let's Encrypt variables for debugging
   ansible.builtin.debug:
     var: networking_tls_certs
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display domain name variables
   ansible.builtin.debug:
     var: ansible_hostname
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display domain name variables
   ansible.builtin.debug:
     var: ansible_fqdn
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display Let's Encrypt facts for debugging
   ansible.builtin.debug:
@@ -91,8 +74,7 @@
       - "Fact -> lets_encrypt_nginx_tls_dir: {{ lets_encrypt_nginx_tls_dir }}"
       - "Fact -> lets_encrypt_renew_service: {{ lets_encrypt_renew_service }}"
       - "Fact -> lets_encrypt_user: {{ lets_encrypt_user }}"
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Confirm Let's Encrypt uninstallation
   ansible.builtin.pause:
@@ -107,9 +89,7 @@
       
       Are you sure you want to proceed with the uninstallation? (yes/no)
   register: uninstall_confirmation
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 - name: Uninstallation Aborted
   ansible.builtin.fail:
@@ -119,9 +99,7 @@
       The lets_encrypt service remains installed and operational.
       No changes have been made to the system.
   when: not (uninstall_confirmation.user_input | bool)
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 
 
@@ -135,10 +113,7 @@
     name: "{{ lets_encrypt_group }}"
     state: present
   become: true
-  tags:
-    - user_group
-    - group
-    - install
+  tags: [install]
 
 - name: Create Let's Encrypt system user "{{ lets_encrypt_user }}"
   ansible.builtin.user:
@@ -149,10 +124,7 @@
     create_home: false
     comment: "Let's Encrypt Service System Account"
   become: true
-  tags:
-    - user_group
-    - user
-    - install
+  tags: [install]
 
 - name: Remove Let's Encrypt user "{{ lets_encrypt_user }}"
   when: uninstall_confirmation.user_input | bool
@@ -163,9 +135,7 @@
     force: yes
   become: true
   failed_when: false
-  tags:
-    - uninstall
-    - never
+  tags: [never, uninstall]
 
 - name: Create directories for Let's Encrypt
   ansible.builtin.file:
@@ -176,11 +146,9 @@
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ lets_encrypt_config_dir }}", mode: "u=rwx,g=r,o="}
+    - { path: "{{ lets_encrypt_certbot_virtual_enviro }}", mode: "u=rwx,g=rx,o="}
   become: true
-  tags:
-    - install
-    - config
-    - directories
+  tags: [install, config]
 
 - name: Remove directories for Let's Encrypt service during uninstallation
   when: uninstall_confirmation.user_input | bool
@@ -189,10 +157,9 @@
     state: absent
   loop:
     - { path: "{{ lets_encrypt_config_dir }}", mode: "u=rwx,g=r,o="}
+    - { path: "{{ lets_encrypt_certbot_virtual_enviro }}", mode: "u=rwx,g=rx,o="}
   become: true
-  tags:
-    - never 
-    - uninstall
+  tags: [never, uninstall]
 
 
 
@@ -211,9 +178,7 @@
       - gcc
     state: present
   become: true
-  tags:
-    - install
-    - certbot
+  tags: [install]
 
 - name: Create a Python virtual environment for Certbot
   ansible.builtin.command: "python3 -m venv {{ lets_encrypt_certbot_virtual_enviro }}"
@@ -221,9 +186,7 @@
     creates: "{{ lets_encrypt_certbot_virtual_enviro }}/bin/activate"
   become: true
   become_user: "{{ lets_encrypt_user }}"
-  tags:
-    - install
-    - certbot
+  tags: [install]
 
 - name: Upgrade pip to the latest version in the Certbot virtual environment
   ansible.builtin.pip:
@@ -233,9 +196,7 @@
     virtualenv_python: python3
   become: true
   become_user: "{{ lets_encrypt_user }}"
-  tags:
-    - install
-    - certbot
+  tags: [install]
 
 - name: Install Certbot and plugins in the virtual environment
   ansible.builtin.pip:
@@ -247,9 +208,7 @@
     state: latest
   become: true
   become_user: "{{ lets_encrypt_user }}"
-  tags:
-    - install
-    - certbot
+  tags: [install]
 
 - name: Ensure certbot home directory is owned by "{{ lets_encrypt_user }}"
   ansible.builtin.file:
@@ -259,9 +218,7 @@
     recurse: true
     mode: '0755'
   become: true
-  tags:
-    - install
-    - certbot
+  tags: [install]
 
 - name: Symlink certbot executable to "{{ lets_encrypt_certbot_binary }}"
   ansible.builtin.file:
@@ -318,7 +275,7 @@
 
 
 ## 04. GENERATE TLS CERTIFICATES & LINK TO NIGINX
-# This section gnerates an ACME account key, registers the account with Let's Encrypt,
+# This section gner
 # and generates the necessary TLS certificates.
 # -----------------------------------------------------------------------------
 

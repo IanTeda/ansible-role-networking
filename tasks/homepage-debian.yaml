@@ -46,24 +46,38 @@
   ansible.builtin.set_fact:
     homepage_user: "{{ networking_homepage.user }}"
     homepage_group: "{{ networking_homepage.group }}"
-    homepage_home_dir: "/opt/{{ homepage.user }}"
-    homepage_config_dir: "/etc/{{ homepage.user }}"
-    homepage_config_file: "/etc/{{ homepage.user }}/config.json"
-    homepage_data_dir: "/var/www/{{ homepage.user  }}"
-    homepage_systemd_name: "{{ homepage.user }}.service"
-    homepage_download_url: "https://github.com/gethomepage/homepage/archive/refs/tags/{{ homepage.release }}.tar.gz"
+    homepage_systemd_name: "{{ networking_homepage.user }}"
     homepage_port: "{{ networking_homepage.port }}"
-  tags:
-    - install
-    - config
-    - healthcheck
-    - verify
+    homepage_release: "{{ networking_homepage.release }}"
+  tags: [always]
+
+- name: Set Homepage directory facts
+  ansible.builtin.set_fact:
+    homepage_home_dir: "/opt/{{ homepage_systemd_name }}"
+    homepage_config_dir: "/etc/{{ homepage_systemd_name }}"
+    homepage_data_dir: "{{ networking_homepage.data_dir }}/{{ homepage_systemd_name }}"
+    homepage_src_dir: "/opt/{{ homepage_systemd_name }}/src-{{ homepage_release }}"
+  tags: [always]
+
+- name: Set Homepage file facts
+  ansible.builtin.set_fact:
+    homepage_download_url: "https://github.com/gethomepage/homepage/archive/refs/tags/{{ homepage_release }}.tar.gz"
+    homepage_download_file: "/tmp/homepage.tar.gz"
+    homepage_config_file: "{{ homepage_config_dir }}/{{ homepage_systemd_name }}.conf"
+    homepage_service_file: "/lib/systemd/system/{{ homepage_systemd_name }}.service"
+    homepage_ufw_profile_file: "/etc/ufw/applications.d/{{ homepage_systemd_name }}"
+    homepage_nginx_config_file: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ homepage_systemd_name }}-location.conf"
+    homepage_hostname: "{{ networking_homepage.hostname }}"
+    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts }}"
+    homepage_title: "{{ networking_homepage.title }}"
+    homepage_theme: "{{ networking_homepage.theme }}"
+    homepage_description: "{{ networking_homepage.description }}"
+  tags: [always]
 
 - name: Display Homepage variables for debugging
   ansible.builtin.debug:
     var: networking_homepage
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display Homepage facts for debugging
   ansible.builtin.debug:
@@ -76,8 +90,7 @@
       - "Fact -> homepage_data_dir: {{ homepage_data_dir }}"
       - "Fact -> homepage_systemd_name: {{ homepage_systemd_name }}"
       - "Fact -> homepage_download_url: {{ homepage_download_url }}"
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Confirm Homepage uninstallation
   ansible.builtin.pause:
@@ -92,11 +105,9 @@
       🗑️  Configuration files: {{ homepage_config_dir }}/
       🗑️  UFW firewall rules
       
-      Are you sure you want to proceed with the uninstallation? (yes/no)
+      Are you sure you want to proceed with the uninstallation? (true/no)
   register: uninstall_confirmation
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 - name: Uninstallation Aborted
   ansible.builtin.fail:
@@ -106,9 +117,7 @@
       The Nginx service remains installed and operational.
       No changes have been made to the system.
   when: not (uninstall_confirmation.user_input | bool)
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 
 
@@ -119,11 +128,9 @@
 
 - name: Check if Homepage service exists
   ansible.builtin.stat:
-    path: "/lib/systemd/system/{{ homepage_systemd_name }}"
-  register: homepage_service_file
-  tags:
-    - install
-    - config
+    path: "{{ homepage_service_file }}"
+  register: homepage_service_file_stat
+  tags: [install, config]
 
 - name: Ensure Homepage service is stopped before install and configuration changes
   ansible.builtin.systemd:
@@ -131,10 +138,8 @@
     state: stopped
   become: true
   failed_when: false
-  when: homepage_service_file.stat.exists
-  tags:
-    - install
-    - config
+  when: homepage_service_file_stat.stat.exists
+  tags: [install, config]
 
 - name: Stop and disable Homepage service for uninstallation
   when: uninstall_confirmation.user_input | bool
@@ -144,9 +149,7 @@
     enabled: no
   become: true
   failed_when: false
-  tags:
-    - uninstall
-    - never
+  tags: [never, uninstall]
 
 
 ## 02. SET UP HOMEPAGE USER & CREATE SERVICE DIRECTORIES
@@ -159,21 +162,19 @@
     name: "{{ homepage_group }}"
     state: present
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Ensure homepage user "{{ homepage_user }}" exists
   ansible.builtin.user:
     name: "{{ homepage_user }}"
     group: "{{ homepage_group }}"
-    system: yes
-    create_home: yes
+    system: true
+    create_home: true
     home: "{{ homepage_home_dir }}"
     shell: /bin/bash
     comment: "Homepage Dashboard Service Account"
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Create config & data directories for Homepage service
   ansible.builtin.file:
@@ -186,8 +187,7 @@
     - { path: "{{ homepage_config_dir }}", mode: "u=rwx,g=rwx,o="}
     - { path: "{{ homepage_data_dir }}",   mode: "u=rwx,g=r,o="}
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Remove config & data directories for Homepage service on uninstall
   when: uninstall_confirmation.user_input | bool
@@ -198,9 +198,7 @@
     - { path: "{{ homepage_config_dir }}", mode: "u=rwx,g=rwx,o="}
     - { path: "{{ homepage_data_dir }}",   mode: "u=rwx,g=r,o="}
   become: true
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 
 ## 03. DOWNLOAD, COMPILE, INSTALL & VERIFY HOMEPAGE
@@ -214,10 +212,9 @@
       - nodejs
       - git
     state: present
-    update_cache: yes
+    update_cache: true
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Install pnpm locally for homepage user
   community.general.npm:
@@ -226,80 +223,76 @@
     state: present
   become: true
   become_user: "{{ homepage_user }}"
-  tags:
-    - install
+  tags: [install]
 
 - name: Download Homepage release tarball
   ansible.builtin.get_url:
     url: "{{ homepage_download_url }}"
-    dest: "/tmp/homepage.tar.gz"
+    dest: "{{ homepage_download_file }}"
     mode: '0644'
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Ensure Homepage source directory exists before extract
   ansible.builtin.file:
-    path: "{{ homepage_home_dir }}/src-{{ homepage.release }}"
+    path: "{{ homepage_src_dir }}"
     state: directory
     owner: "{{ homepage_user }}"
     group: "{{ homepage_group }}"
     mode: '0755'
   become: true
-  tags:
-    - install
+  tags: [install]
 
-- name: Extract Homepage release into "{{ homepage_home_dir }}/src-{{ homepage.release }}"
+- name: Extract Homepage release into {{ homepage_home_dir }}/src-{{ homepage.release }}
   ansible.builtin.unarchive:
     src: "/tmp/homepage.tar.gz"
-    dest: "{{ homepage_home_dir }}/src-{{ homepage.release }}"
-    remote_src: yes
+    dest: "{{ homepage_src_dir }}"
+    remote_src: true
     extra_opts:
       - --strip-components=1
     owner: "{{ homepage_user }}"
     group: "{{ homepage_group }}"
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Ensure extracted files have correct ownership"
   ansible.builtin.file:
-    path: "{{ homepage_home_dir }}/src-{{ homepage.release }}"
+    path: "{{ homepage_src_dir }}"
     owner: "{{ homepage_user }}"
     group: "{{ homepage_group }}"
     recurse: true
     mode: 'u=rwX,g=r,o='
   become: true
-  tags:
-    - install
+  tags: [install]
 
 - name: Install Homepage dependencies in package.json using pnpm
   ansible.builtin.command:
-    cmd: npx pnpm install
-    chdir: "{{ homepage_home_dir }}/src-{{ homepage.release }}"
+    cmd: "{{ homepage_home_dir }}/node_modules/.bin/pnpm install"
+    chdir: "{{ homepage_src_dir }}"
+  environment:
+    PATH: "{{ homepage_home_dir }}/node_modules/.bin:{{ ansible_env.PATH }}"
   become: true
   become_user: "{{ homepage_user }}"
-  tags:
-    - install
   changed_when: true
+  tags: [install]
 
 - name: Build Homepage application using pnpm
   ansible.builtin.command:
-    cmd: npx pnpm run build
-    chdir: "{{ homepage_home_dir }}/src-{{ homepage.release }}"
+    cmd: "{{ homepage_home_dir }}/node_modules/.bin/pnpm run build"
+    chdir: "{{ homepage_src_dir }}"
+  environment:
+    PATH: "{{ homepage_home_dir }}/node_modules/.bin:{{ ansible_env.PATH }}"
   become: true
   become_user: "{{ homepage_user }}"
-  tags:
-    - install
   changed_when: true
+  tags: [install]
 
 - name: Clean up downloaded tarball
   ansible.builtin.file:
-    path: "/tmp/homepage.tar.gz"
+    path: "{{ homepage_download_file }}"
     state: absent
   become: true
-  tags:
-    - install
+  tags: [install]
 
 
 
@@ -323,7 +316,7 @@
 #   ansible.builtin.copy:
 #     src: "{{ homepage_home_dir }}/src-{{ homepage.release }}/out/"
 #     dest: "{{ homepage_data_dir }}"
-#     remote_src: yes
+#     remote_src: true
 #     owner: www-data
 #     group: www-data
 #     mode: '0644'
@@ -338,7 +331,7 @@
 #     owner: www-data
 #     group: www-data
 #     mode: '0644'
-#     recurse: yes
+#     recurse: true
 #   become: true
 #   tags:
 #     - install
@@ -352,14 +345,12 @@
 - name: Deploy Homepage environment configuration
   ansible.builtin.template:
     src: templates/homepage-config.env.j2
-    dest: "{{ homepage_config_dir }}/homepage.conf"
+    dest: "{{ homepage_config_file }}"
     owner: "{{ homepage_user }}"
     group: "{{ homepage_group }}"
     mode: '0600'
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 # TODO: can we verify the env configuration
 
@@ -370,56 +361,43 @@
 - name: Deploy Homepage systemd service template
   ansible.builtin.template:
     src: templates/homepage-systemd.service.j2
-    dest: "/lib/systemd/system/{{ homepage_systemd_name }}"
+    dest: "{{ homepage_service_file }}"
     mode: '0644'
     owner: root
     group: root
   become: true
   register: systemd_service_template
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Reload systemd daemon to capture service file changes
   ansible.builtin.systemd:
-    daemon_reload: yes
+    daemon_reload: true
   become: true
   when: systemd_service_template.changed
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Verify Homepage systemd service config is valid
-  ansible.builtin.command: systemd-analyze verify /lib/systemd/system/{{ homepage_systemd_name }}
+  ansible.builtin.command: systemd-analyze verify {{ homepage_service_file }}
   register: systemd_verify
   changed_when: false
   failed_when: systemd_verify.rc != 0
-  tags:
-    - install
-    - config
-    - verify
+  tags: [install, config, verify]
 
 - name: Start and enable Homepage service
   ansible.builtin.systemd:
     name: "{{ homepage_systemd_name }}"
     state: started
-    enabled: yes
-    daemon_reload: yes
+    enabled: true
+    daemon_reload: true
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Verify Homepage service is active
   ansible.builtin.systemd:
     name: "{{ homepage_systemd_name }}"
   register: homepage_service_status
   changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Assert Homepage service is running
   ansible.builtin.assert:
@@ -427,11 +405,7 @@
       - homepage_service_status.status.ActiveState == "active"
     fail_msg: "Homepage service is NOT active."
     success_msg: "Homepage service is active."
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 
 
@@ -442,45 +416,35 @@
 - name: Deploy Homepage UFW application profile
   ansible.builtin.template:
     src: templates/homepage-ufw-profile.j2
-    dest: /etc/ufw/applications.d/{{ homepage_systemd_name }}
+    dest: "{{ homepage_ufw_profile_file }}"
     mode: '0644'
     owner: root
     group: root
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Reload UFW Homepage application profiles
   ansible.builtin.command: "ufw app update {{ homepage_systemd_name }}"
   become: true
   changed_when: false
   failed_when: false
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Allow Homepage application profile through firewall
   ansible.builtin.ufw:
     rule: allow
     name: Homepage
-    comment: "ALLOW Homepage ({{ networking_homepage.port }}/tcp) for LOCAL NET"
+    comment: "ALLOW Homepage ({{ homepage_port }}/tcp) for LOCAL NET"
     src: '{{ item }}'
   loop: "{{ networking_networks.local }}"
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Confirm Homepage UFW profile is allowed for local networks
   ansible.builtin.command: "ufw status numbered"
   register: ufw_status
   changed_when: false
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 - name: Assert Homepage UFW rule exists for each local network
   ansible.builtin.assert:
@@ -489,11 +453,7 @@
     fail_msg: "Homepage UFW rule is NOT present for {{ item }}"
     success_msg: "Homepage UFW rule is present for {{ item }}"
   loop: "{{ networking_networks.local }}"
-  tags:
-    - install
-    - config
-    - verify
-    - healthcheck
+  tags: [install, config, verify, healthcheck]
 
 
 
@@ -504,14 +464,12 @@
 - name: Copy Nginx location template configuration for Homepage
   ansible.builtin.template:
     src: templates/homepage-nginx-location.j2
-    dest: /etc/nginx/conf.d/{{ ansible_hostname }}-{{ homepage_systemd_name }}-location.conf
+    dest: "{{ homepage_nginx_config_file }}"
     mode: '0644'
     owner: root
     group: root
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 - name: Verify Nginx configuration is valid
   ansible.builtin.command: nginx -t
@@ -519,19 +477,14 @@
   changed_when: false
   failed_when: nginx_test.rc != 0
   become: true
-  tags:
-    - install
-    - config
-    - verify
+  tags: [install, config, verify]
 
 - name: Restart Nginx after location configuration
   ansible.builtin.systemd_service:
     name: nginx
     state: restarted
   become: true
-  tags:
-    - install
-    - config
+  tags: [install, config]
 
 
 ## 08. HEALTH CHECKS FOR HOMEPAGE
@@ -549,9 +502,7 @@
   until: homepage_port_response.status in [200, 302]
   retries: 12
   delay: 5
-  tags:
-    - verify
-    - healthcheck
+  tags: [verify, healthcheck]
 
 - name: Wait for Homepage to be available via Nginx location
   ansible.builtin.uri:
@@ -563,9 +514,7 @@
   until: homepage_nginx_response.status in [200, 302]
   retries: 12
   delay: 5
-  tags:
-    - verify
-    - healthcheck
+  tags: [verify, healthcheck]
 
 - name: Assert Homepage port is reachable
   ansible.builtin.assert:
@@ -573,9 +522,7 @@
       - homepage_port_response.status in [200, 302]
     fail_msg: "Homepage port {{ networking_homepage.port }} is NOT reachable."
     success_msg: "Homepage port {{ networking_homepage.port }} is reachable."
-  tags:
-    - verify
-    - healthcheck
+  tags: [verify, healthcheck]
 
 - name: Assert Homepage Nginx location is reachable
   ansible.builtin.assert:
@@ -583,14 +530,10 @@
       - homepage_nginx_response.status in [200, 302]
     fail_msg: "Homepage Nginx location (http://{{ ansible_hostname }}/) is NOT reachable."
     success_msg: "Homepage Nginx location (http://{{ ansible_hostname }}/) is reachable."
-  tags:
-    - verify
-    - healthcheck
+  tags: [verify, healthcheck]
 
 - name: Display Homepage and BTC server access links
   ansible.builtin.debug:
     msg:
       - "Homepage is now available at: http://{{ ansible_hostname }}/"
-  tags:
-    - verify
-    - healthcheck
+  tags: [verify, healtcheck]

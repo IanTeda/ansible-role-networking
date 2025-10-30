@@ -59,7 +59,7 @@
 # Service runs as user: {{ homepage_user }}
 # Working directory: /opt/{{ homepage_user }}/src
 # Config directory: /data/{{ homepage_user }}/config
-# Port: {{ homepage.port }}
+# Port: {{ homepage_port }}
 
 [Unit]
 Description=Homepage Dashboard Server
@@ -80,15 +80,16 @@ Wants=network-online.target
 Type=simple
 
 # Environmental configuration
-EnvironmentFile={{ homepage_config_dir }}/homepage.conf
+EnvironmentFile={{ homepage_config_file }}
 Environment=HOMEPAGE_CONFIG_DIR={{ homepage_config_dir }}
+Environment=PATH={{ homepage_home_dir }}/node_modules/.bin:{{ ansible_env.PATH }}
 
 # The directory to run the ExecStart from
-WorkingDirectory={{ homepage_home_dir }}/src-{{ homepage.release }}
+WorkingDirectory={{ homepage_home_dir }}/src-{{ homepage_release }}
 
 # Start Homepage
 # ExecStart=/usr/bin/node .next/standalone/server.js
-ExecStart=/usr/bin/npx pnpm start
+ExecStart={{ homepage_home_dir }}/node_modules/.bin/pnpm start
 
 ExecReload=/bin/kill -HUP $MAINPID
 
