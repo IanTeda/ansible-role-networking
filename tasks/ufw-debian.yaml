@@ -31,18 +31,13 @@
     ufw_before_rules_file: "/etc/ufw/before.rules"
     ufw_binary_path: "/usr/sbin/ufw"
     ufw_systemd_name: "ufw"
-    ssh_port: "{{ networking_ssh.listen_port }}"
-  tags:
-    - install
-    - config
-    - healthcheck
-    - uninstall
+    ufw_ssh_port_default: "22"
+  tags: [always]
 
 - name: Display UFW variables for debugging
   ansible.builtin.debug:
     var: networking_ufw
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Display UFW facts for debugging
   ansible.builtin.debug:
@@ -54,8 +49,7 @@
       - "Fact -> ufw_before_rules_file: {{ ufw_before_rules_file }}"
       - "Fact -> ufw_binary_path: {{ ufw_binary_path }}"
       - "Fact -> ufw_systemd_name: {{ ufw_systemd_name }}"
-  tags:
-    - debug
+  tags: [debug]
 
 - name: Confirm UFW uninstallation
   ansible.builtin.pause:
@@ -70,9 +64,7 @@
       
       Are you sure you want to proceed with the uninstallation? (yes/no)
   register: uninstall_confirmation
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 - name: Uninstallation Aborted
   ansible.builtin.fail:
@@ -82,9 +74,7 @@
       The ufw service remains installed and operational.
       No changes have been made to the system.
   when: not (uninstall_confirmation.user_input | bool)
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 
 
@@ -99,8 +89,7 @@
     update_cache: yes
     force: true
   become: true
-  tags:
-    - install
+  tags: [install]
 
 
 ## 01. SHUTDOWN UFW SERVICES
@@ -116,9 +105,7 @@
     enabled: no
   become: true
   failed_when: false
-  tags:
-    - uninstall
-    - never
+  tags: [never, uninstall]
 
 - name: Uninstall UFW package
   when: uninstall_confirmation.user_input | bool
@@ -128,9 +115,7 @@
     state: absent
     update_cache: true
   become: true
-  tags:
-    - never
-    - uninstall
+  tags: [never, uninstall]
 
 
 
@@ -182,29 +167,12 @@
   notify: UFW Restart 
   tags: [install, config]
 
-
-- name: Deploy SSH application profile
-  ansible.builtin.template:
-    src: templates/ssh-ufw-profile.j2
-    dest: "/etc/ufw/applications.d/ssh"
-    owner: root
-    group: root
-    mode: '0644'
-  become: true
-  tags: [install, config]
-
-- name: Reload UFW SSH application profiles
-  ansible.builtin.command: "ufw app update ssh"
-  become: true
-  changed_when: false
-  failed_when: false
-  tags: [install, config]
-
 - name: Allow SSH connections - anti lockout
   community.general.ufw:
     rule: allow
-    name: SSH
-    comment: "ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT"
+    port: "{{ ufw_ssh_port_default }}"
+    proto: tcp
+    comment: "ALLOW SSH ({{ ufw_ssh_port_default }}/tcp) from LOCAL NET - ANTI LOCKOUT"
     src: '{{ item }}'
   loop: "{{ networking_networks.local }}"
   become: true
@@ -264,7 +232,7 @@
   ansible.builtin.command: ufw status
   register: ufw_localhost
   changed_when: false
-  failed_when: "'ALLOW SSH (22/tcp) from LOCAL NET - ANTI LOCKOUT' not in ufw_localhost.stdout"
+  failed_when: "'ALLOW SSH ({{ ufw_ssh_port_default }}/tcp) from LOCAL NET - ANTI LOCKOUT' not in ufw_localhost.stdout"
   tags: [install, config, verify, healthcheck]
 
 - name: Display UFW status for review
