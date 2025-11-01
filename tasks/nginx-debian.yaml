@@ -326,12 +326,12 @@
     success_msg: "Nginx service is running successfully."
   tags: [install, config, verify, healthcheck]
 
-- name: Verify Nginx is listening on HTTP (80)
-  ansible.builtin.shell: ss -tnlp | grep ':80 '
-  register: nginx_http
-  changed_when: false
-  failed_when: nginx_http.rc != 0
-  tags: [install, config, verify, healthcheck]
+# - name: Verify Nginx is listening on HTTP (80)
+#   ansible.builtin.shell: ss -tnlp | grep ':80 '
+#   register: nginx_http
+#   changed_when: false
+#   failed_when: nginx_http.rc != 0
+#   tags: [install, config, verify, healthcheck]
 
 - name: Verify Nginx is listening on HTTPS (443)
   ansible.builtin.shell: ss -tnlp | grep ':443 '

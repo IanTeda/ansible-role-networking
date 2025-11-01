@@ -189,23 +189,13 @@
   tags: [install]
 
 - name: Upgrade pip to the latest version in the Certbot virtual environment
-  ansible.builtin.pip:
-    name: pip
-    state: latest
-    virtualenv: "{{ lets_encrypt_certbot_virtual_enviro }}"
-    virtualenv_python: python3
+  ansible.builtin.command: "{{ lets_encrypt_certbot_virtual_enviro }}/bin/python -m pip install --upgrade pip"
   become: true
   become_user: "{{ lets_encrypt_user }}"
   tags: [install]
 
 - name: Install Certbot and plugins in the virtual environment
-  ansible.builtin.pip:
-    name:
-      - certbot
-      - certbot-dns-cloudflare
-    virtualenv: "{{ lets_encrypt_certbot_virtual_enviro }}"
-    virtualenv_python: python3
-    state: latest
+  ansible.builtin.command: "{{ lets_encrypt_certbot_virtual_enviro }}/bin/pip install --upgrade certbot certbot-dns-cloudflare"
   become: true
   become_user: "{{ lets_encrypt_user }}"
   tags: [install]

@@ -1,7 +1,7 @@
 # Bitcoin Server NGINX Configuration
 # ==================================
 #
-# Default HTTP server configuration for Bitcoin node with modular includes
+# Default HTTPS server configuration for Bitcoin node with modular includes
 # This serves as the base configuration for additional Bitcoin-related services
 #
 # Template Variables:
@@ -10,14 +10,6 @@
 # Usage:
 #   Add service-specific configurations in {{ nginx_sites_location }}/{{ nginx_server_name }}-*.conf
 #   which will be automatically included via the include directive below
-
-server {
-    listen 80;
-    server_name {{ nginx_server_name }} localhost;
-
-    # Redirect all HTTP to HTTPS
-    return 301 https://$host$request_uri;
-}
 
 server {
     listen 443 ssl http2;
