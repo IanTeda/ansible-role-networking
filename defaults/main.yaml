@@ -103,6 +103,21 @@ networking_openvpn_client:
   vpn_server: '{{ vault_vpn_server }}'
   dns_servers: "209.222.18.218 209.222.18.222 1.1.1.1 9.9.9.9"           # List of DNS servers to use when VPN is active
 
+networking_samba:
+  user: 'samba'
+  group: 'samba'
+  workgroup: '{{ vault_networking_domain }}'           # Samba workgroup name
+  interfaces: 'lo eth0 wlan0'                          # Network interfaces for Samba
+  smb_config_path: '/etc/samba/smb.conf'               # Path to Samba configuration file
+  shares:
+    - name: 'shared'
+      path: '/srv/samba/shared'
+      read_only: no
+      valid_users:
+        - 'user1'
+        - 'user2'
+  users: "{{ vault_networking_samba_users }}"         # List of users with passwords
+
 ## SSH Configuration
 networking_ssh:
   user: 'root'
@@ -116,3 +131,24 @@ networking_ssh:
 networking_ufw:
   user: 'root'
   group: 'root'
+
+## WireGuard VPN Configuration
+networking_wireguard_vpn:
+  interface_name: 'privadovpn'
+  private_key: "{{ vault_wireguard_private_key }}"
+  public_key: "{{ vault_wireguard_public_key }}"
+  address: "{{ vault_wireguard_address }}"
+  dns: "{{ vault_wireguard_dns }}"
+  endpoint: "{{ vault_wireguard_endpoint }}"
+  allowed_ips: "{{ vault_wireguard_allowed_ips }}"
+  auto_start: true
+
+## VPN Kill Switch Configuration
+networking_vpn_kill_switch:
+  enabled: true
+  vpn_service: "wg-quick@privadovpn"
+  vpn_interface: "{{ networking_wireguard_vpn.interface_name }}"
+  allow_local_networks: true
+  allow_dhcp: true
+  log_dropped_packets: false
+  test_enabled: false

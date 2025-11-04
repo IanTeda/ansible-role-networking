@@ -1,0 +1,215 @@
+# ==============================================================================
+# VPN KILL SWITCH TASKS
+# ==============================================================================
+#
+# This file implements a VPN kill switch for WireGuard VPN connections using UFW
+# (Uncomplicated Firewall). The kill switch ensures that all network traffic is
+# blocked when the VPN connection is not active, preventing accidental data leaks.
+#
+# FEATURES:
+# - Automatic UFW rule deployment for VPN-only traffic
+# - Primary network interface detection
+# - Comprehensive health checks and connectivity testing
+# - Backup and restore of original UFW configuration
+# - Configurable local network and DHCP access
+#
+# SECURITY CONSIDERATIONS:
+# - All non-VPN traffic is blocked when VPN is down
+# - Local network access can be configured for LAN connectivity
+# - DHCP traffic is allowed for IP address renewal
+# - Testing mode available to verify kill switch functionality
+#
+# DEPENDENCIES:
+# - WireGuard VPN service (wg-quick)
+# - UFW firewall
+# - networking role variables (networking_vpn_kill_switch.*)
+#
+# USAGE:
+# - Include this file in the main networking tasks
+# - Configure variables in networking/defaults/main.yaml
+# - Run with tags: install, config, verify, healthcheck, killswitch-test
+#
+# ==============================================================================
+
+---
+
+- name: Set Kill Switch role facts
+  ansible.builtin.set_fact:
+    kill_switch_interface: "{{ networking_vpn_kill_switch.vpn_interface | default(networking_wireguard_vpn.interface_name) }}"
+    vpn_kill_switch_vpn_service: "{{ networking_vpn_kill_switch.vpn_service | default('wg-quick@' + networking_wireguard_vpn.interface_name) }}"
+  tags: [always]
+
+- name: Validate kill switch configuration
+  ansible.builtin.assert:
+    that:
+      - kill_switch_interface is defined
+      - vpn_kill_switch_vpn_service is defined
+    fail_msg: "VPN kill switch configuration is incomplete"
+  tags: [always]
+
+- name: Get primary network interface name
+  ansible.builtin.shell: |
+    # Try to find the primary network interface
+    # Priority: 1. Default route interface, 2. First ethernet interface
+    DEFAULT_IF=$(ip route show default | awk '/default/ {print $5}' | head -1)
+    if [ -n "$DEFAULT_IF" ] && [ "$DEFAULT_IF" != "lo" ]; then
+      echo "$DEFAULT_IF"
+    else
+      ip -o link show | awk -F': ' '{print $2}' | grep -E '^(en|eth)' | grep -v 'lo' | head -n1
+    fi
+  register: primary_interface
+  changed_when: false
+  failed_when: primary_interface.stdout == ''
+  tags: [always]
+
+- name: Set primary network interface as Ansible fact
+  ansible.builtin.set_fact:
+    host_primary_network_interface: "{{ primary_interface.stdout }}"
+  tags: [always]
+
+- name: Display primary network interface
+  ansible.builtin.debug:
+    msg: "Primary network interface: {{ host_primary_network_interface }}"
+  tags: [debug]
+
+- name: Backup original UFW before.rules if not already backed up
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules
+    dest: /etc/ufw/before.rules.orig
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+  become: true
+  tags: [install, kill-switch]
+
+- name: Deploy UFW kill switch rules file
+  ansible.builtin.template:
+    src: templates/vpn-kill-switch-before.rules.j2
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, kill-switch]
+
+- name: Restore original UFW before.rules from backup
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules.orig
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+    remote_src: true
+    force: true
+  become: true
+  tags: [never, uninstall, restore]
+
+- name: Reload UFW to apply new rules
+  community.general.ufw:
+    state: reloaded
+  become: true
+  changed_when: false
+  tags: [install, config, restore]
+
+
+
+# ==============================================================================
+## HEALTH CHECKS
+# Confirm wireguard vpn is operational
+# ------------------------------------------------------------------------------
+
+
+- name: Test VPN kill switch functionality
+  become: true
+  tags: [install, config, verify, healthcheck]
+  block:
+    - name: Stop vpn service to test kill switch
+      ansible.builtin.systemd:
+        name: "{{ vpn_kill_switch_vpn_service  }}"
+        state: stopped
+
+    - name: Pause for 2 seconds to ensure service is fully down
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Test external connectivity with VPN down (should fail)
+      ansible.builtin.uri:
+        url: https://api.ipify.org
+        timeout: 5
+      register: killswitch_test_result
+      ignore_errors: true
+
+    - name: Assert kill switch is working (traffic should be blocked)
+      ansible.builtin.assert:
+        that:
+          - killswitch_test_result.failed
+        fail_msg: "Kill switch is NOT working! Traffic was not blocked when VPN was down."
+        success_msg: "Kill switch is working correctly - traffic was blocked when VPN was down."
+
+  always:
+    - name: Restart VPN service after kill switch test
+      ansible.builtin.systemd:
+        name: "{{ vpn_kill_switch_vpn_service }}"
+        state: restarted
+        enabled: true
+
+- name: Stop WireGuard VPN service for kill switch test
+  ansible.builtin.systemd:
+    name: "{{ networking_wireguard_service_name }}"
+    state: stopped
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]
+
+- name: Reload UFW rules after stopping VPN
+  ansible.builtin.command: ufw reload
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  changed_when: false
+  tags: [killswitch-test]
+
+- name: Wait for UFW rules to take effect
+  ansible.builtin.pause:
+    seconds: 2
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]
+
+- name: Test that external connectivity is blocked (kill switch working)
+  ansible.builtin.uri:
+    url: "https://1.1.1.1"
+    timeout: 5
+  register: connectivity_test
+  failed_when: connectivity_test.status != -1  # Should fail with connection timeout/error
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]
+
+- name: Restart WireGuard VPN service after test
+  ansible.builtin.systemd:
+    name: "{{ networking_wireguard_service_name }}"
+    state: restarted
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]
+
+- name: Reload UFW rules after restarting VPN
+  ansible.builtin.command: ufw reload
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  changed_when: false
+  tags: [killswitch-test]
+
+- name: Verify VPN connectivity is restored
+  ansible.builtin.uri:
+    url: "https://1.1.1.1"
+    timeout: 10
+  register: vpn_connectivity_test
+  failed_when: vpn_connectivity_test.status != 200
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]
+
+- name: Kill switch test results
+  ansible.builtin.debug:
+    msg: |
+      Kill switch test completed successfully!
+      - External traffic blocked when VPN is down: ✓
+      - VPN connectivity restored: ✓
+  when: networking_vpn_kill_switch_test_enabled | default(false)
+  tags: [killswitch-test]

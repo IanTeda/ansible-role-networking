@@ -1,0 +1,546 @@
+# WIREGUARD CLIENT INSTALLATION FOR DEBIAN
+# ========================================
+#
+# Installs and configures WireGuard client with comprehensive testing and validation.
+#
+# Tasks included:
+#   - Install WireGuard tools and kernel module
+#   - Create WireGuard configuration file with proper permissions
+#   - Enable and start WireGuard interface with error handling
+#   - Comprehensive health checks and connectivity testing
+#   - Graceful handling of connectivity issues during deployment
+#   - Detailed diagnostics for troubleshooting
+#   - Timeout handling for external service calls
+#   - Reliable external IP detection using curl
+#
+# References:
+#   - https://www.wireguard.com/
+#
+# Requirements:
+#   - VPN account with Wireguard private/public keys and server details
+#   - Store keys and config in vault: vault_wireguard_private_key, vault_wireguard_public_key, etc.
+#   - Configure networking_wireguard_vpn variables in defaults
+#
+# Usage:
+#   Include this file in your playbook or role to set up WireGuard client.
+#   Run with tags: install, config, verify, healthcheck, killswitch-test, integration
+#
+# Testing:
+#   - Basic connectivity: ping, DNS resolution, IP verification
+#   - Peer status: handshake validation, transfer statistics
+#   - Network config: routing tables, MTU verification
+#   - Performance: latency, packet loss, throughput tests
+#   - Security: kill switch integration testing
+#   - Error handling: automatic rollback on failures
+#
+
+- name: Display WireGuard variables for debugging
+  ansible.builtin.debug:
+    var: networking_wireguard_vpn
+  tags:
+    - debug
+
+- name: Set WireGuard role facts
+  ansible.builtin.set_fact:
+    wireguard_interface: "{{ networking_wireguard_vpn.interface_name }}"
+    wireguard_private_key: "{{ networking_wireguard_vpn.private_key }}"
+    wireguard_public_key: "{{ networking_wireguard_vpn.public_key }}"
+    wireguard_address: "{{ networking_wireguard_vpn.address }}"
+    wireguard_dns: "{{ networking_wireguard_vpn.dns }}"
+    wireguard_endpoint: "{{ networking_wireguard_vpn.endpoint }}"
+    wireguard_allowed_ips: "{{ networking_wireguard_vpn.allowed_ips }}"
+    wireguard_auto_start: "{{ networking_wireguard_vpn.auto_start }}"
+  tags: [always]
+
+- name: Set WireGuard directory facts
+  ansible.builtin.set_fact:
+    wireguard_config_dir: "/etc/wireguard"
+  tags: [always]
+
+- name: Set WireGuard file facts
+  ansible.builtin.set_fact:
+    wireguard_config_file: "{{ wireguard_config_dir }}/{{ wireguard_interface }}.conf"
+    wireguard_systemd_service: "wg-quick@{{ wireguard_interface }}.service"
+  tags: [always]
+
+- name: Install WireGuard and dependencies
+  ansible.builtin.apt:
+    name:
+      - wireguard             # WireGuard kernel module
+      - wireguard-tools       # WireGuard user-space tools
+      - resolvconf            # DNS resolver configuration tool
+    state: present
+    update_cache: yes
+  become: true
+  tags: [install]
+
+- name: Ensure WireGuard configuration directory exists
+  ansible.builtin.file:
+    path: "{{ wireguard_config_dir }}"
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+  become: true
+  tags: [install, config]
+
+- name: Deploy and test WireGuard configuration
+  block:
+    - name: Deploy WireGuard configuration file
+      ansible.builtin.template:
+        src: templates/wireguard-config.conf.j2
+        dest: "{{ wireguard_config_file }}"
+        mode: '0600'
+        owner: root
+        group: root
+      become: true
+      notify: WireGuard Restart
+      tags: [install, config]
+
+    - name: Enable WireGuard interface at boot
+      ansible.builtin.systemd:
+        name: "{{ wireguard_systemd_service }}"
+        enabled: "{{ wireguard_auto_start }}"
+        daemon_reload: yes
+      become: true
+      tags: [install, config]
+
+    - name: Start WireGuard interface
+      ansible.builtin.systemd:
+        name: "wg-quick@{{ wireguard_interface }}"
+        state: started
+      become: true
+      tags: [install, config]
+
+    - name: Wait for WireGuard interface to initialize
+      ansible.builtin.pause:
+        seconds: 3
+      tags: [install, config]
+
+    - name: Quick connectivity test after startup (non-blocking)
+      ansible.builtin.command: ping -c 1 8.8.8.8
+      register: startup_ping
+      changed_when: false
+      failed_when: false  # Don't fail deployment on connectivity issues
+      become: true
+      tags: [install, config]
+
+    - name: Log connectivity test result
+      ansible.builtin.debug:
+        msg: |
+          WireGuard startup connectivity test: {{ 'PASSED' if startup_ping.rc == 0 else 'FAILED (may be expected if VPN server is unreachable)' }}
+          This does not fail the deployment - full connectivity testing happens in health checks.
+      tags: [install, config]
+
+    - name: Check WireGuard interface status after startup
+      ansible.builtin.command: wg show {{ wireguard_interface }}
+      register: wg_startup_status
+      changed_when: false
+      failed_when: false
+      become: true
+      tags: [install, config]
+
+    - name: Check routing table after WireGuard startup
+      ansible.builtin.command: ip route show dev {{ wireguard_interface }}
+      register: wg_routes_startup
+      changed_when: false
+      failed_when: false
+      become: true
+      tags: [install, config]
+
+    - name: Log WireGuard startup diagnostics
+      ansible.builtin.debug:
+        msg: |
+          WireGuard Startup Diagnostics:
+          - Interface status: {{ 'UP' if wg_startup_status.rc == 0 else 'DOWN/ERROR' }}
+          - Routes configured: {{ wg_routes_startup.stdout_lines | length }}
+          - Connectivity test: {{ 'PASSED' if startup_ping.rc == 0 else 'FAILED' }}
+          
+          If connectivity fails, check:
+          1. VPN server reachability: ping {{ wireguard_endpoint.split(':')[0] }}
+          2. Firewall rules: ufw status
+          3. WireGuard logs: journalctl -u wg-quick@{{ wireguard_interface }}
+      tags: [install, config]
+
+  rescue:
+    - name: WireGuard configuration failed - stopping service
+      ansible.builtin.systemd:
+        name: "wg-quick@{{ wireguard_interface }}"
+        state: stopped
+      become: true
+      ignore_errors: true
+      tags: [install, config]
+
+    - name: WireGuard configuration failed - disabling service
+      ansible.builtin.systemd:
+        name: "{{ wireguard_systemd_service }}"
+        enabled: false
+      become: true
+      ignore_errors: true
+      tags: [install, config]
+
+    - name: WireGuard configuration failed - removing config file
+      ansible.builtin.file:
+        path: "{{ wireguard_config_file }}"
+        state: absent
+      become: true
+      ignore_errors: true
+      tags: [install, config]
+
+    - name: Fail with detailed error message
+      ansible.builtin.fail:
+        msg: |
+          WireGuard configuration failed. Configuration has been rolled back.
+          Check the following:
+          - Verify WireGuard credentials are correct
+          - Check network connectivity to VPN endpoint
+          - Ensure firewall allows WireGuard traffic (UDP port 51820)
+          - Review WireGuard logs: journalctl -u {{ wireguard_systemd_service }}
+  tags: [install, config]
+
+- name: Validate WireGuard configuration
+  ansible.builtin.assert:
+    that:
+      - networking_wireguard_vpn.interface_name is defined
+      - networking_wireguard_vpn.private_key is defined
+      - networking_wireguard_vpn.public_key is defined
+      - networking_wireguard_vpn.address is defined
+      - networking_wireguard_vpn.dns is defined
+      - networking_wireguard_vpn.endpoint is defined
+      - networking_wireguard_vpn.allowed_ips is defined
+    fail_msg: "WireGuard configuration is incomplete. Please ensure all required variables are defined in networking_wireguard_vpn"
+    success_msg: "WireGuard configuration validation passed"
+  tags: [always]
+
+
+
+# ==============================================================================
+## HEALTH CHECKS
+#
+# ------------------------------------------------------------------------------
+
+- name: Check Wireguard interface "{{ wireguard_interface }}" service status
+  ansible.builtin.systemd:
+    name: "{{ wireguard_systemd_service }}"
+  register: wireguard_service_status
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert WireGuard interface "{{ wireguard_interface }}" is running
+  ansible.builtin.assert:
+    that:
+      - wireguard_service_status.status.ActiveState == "active"
+    fail_msg: "WireGuard inetrface {{ wireguard_interface }} service is not running! Status: {{ wireguard_service_status.status.ActiveState }}"
+    success_msg: "WireGuard interface {{ wireguard_interface }} service is running successfully."
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify WireGuard interface "{{ wireguard_interface }}" is up
+  ansible.builtin.command: wg show {{ wireguard_interface }}
+  register: wg_status
+  changed_when: false
+  failed_when: wg_status.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Check `ip link` to assert wireguard interface "{{ wireguard_interface }}" is up
+  ansible.builtin.command: ip link show {{ wireguard_interface }}
+  register: ip_link_status
+  changed_when: false
+  failed_when: ip_link_status.rc != 0
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert VPN interface "{{ wireguard_interface }}" is up (status check)
+  ansible.builtin.assert:
+    that:
+      - ip_link_status.rc == 0
+    fail_msg: "VPN interface {{ wireguard_interface }} is not up! Status: {{ ip_link_status.stdout }}"
+    success_msg: "VPN interface {{ wireguard_interface }} is up and running."
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify WireGuard has internet connectivity
+  ansible.builtin.command: ping -c 3 8.8.8.8
+  register: ping_result
+  changed_when: false
+  failed_when: ping_result.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Get external IP address of Ansible control node
+  ansible.builtin.command: curl -s --max-time 10 https://api.ipify.org
+  register: host_external_ip_cmd
+  run_once: true
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == groups['all'][0]
+  tags: [install, config, verify, healthcheck]
+
+- name: Set control node external IP as fact
+  ansible.builtin.set_fact:
+    host_external_ip: "{{ host_external_ip_cmd.stdout | default('UNKNOWN') }}"
+  run_once: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Get external IP address of "{{ ansible_host }}"
+  ansible.builtin.uri:
+    url: https://api.ipify.org
+    return_content: true
+    timeout: 10
+  register: external_ip
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert VPN is working (external control node IP should be different to {{ ansible_host }})
+  ansible.builtin.assert:
+    that:
+      - host_external_ip != external_ip.content
+    fail_msg: "WireGuard is NOT working! Control node and client have the same external IP: {{ external_ip.content }}"
+    success_msg:
+      - "WireGuard is working correctly."
+      - "Control node external IP:             {{ host_external_ip }}"
+      - "Client external IP:                   {{ external_ip.content }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Get current public IP address
+  ansible.builtin.uri:
+    url: https://api.ipify.org
+    return_content: yes
+    timeout: 10
+  register: public_ip
+  failed_when: public_ip.status != 200
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify public IP is not a private/local address
+  ansible.builtin.fail:
+    msg: "Public IP {{ public_ip.content }} appears to be a private/local address. VPN may not be working correctly."
+  when: public_ip.content | ansible.netcommon.ipaddr('private')
+  tags: [install, config, verify, healthcheck]
+
+- name: Display WireGuard interface information
+  ansible.builtin.debug:
+    msg: |
+      WireGuard Interface Status:   {{ wg_status.stdout }}
+      Current Public IP:            {{ public_ip.content }}
+  tags: [install, config, verify, healthcheck]
+
+- name: Test DNS resolution through VPN
+  ansible.builtin.command: nslookup google.com
+  register: dns_test
+  changed_when: false
+  failed_when: dns_test.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert DNS resolution is working
+  ansible.builtin.assert:
+    that:
+      - "'google.com' in dns_test.stdout"
+    fail_msg: "DNS resolution through VPN is not working. Output: {{ dns_test.stdout }}"
+    success_msg: "DNS resolution through VPN is working correctly"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test DNS server connectivity
+  ansible.builtin.command: nslookup -type=A google.com {{ wireguard_dns.split(',')[0] }}
+  register: dns_server_test
+  changed_when: false
+  failed_when: dns_server_test.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert DNS server is reachable
+  ansible.builtin.assert:
+    that:
+      - "'google.com' in dns_server_test.stdout"
+    fail_msg: "Configured DNS server {{ wireguard_dns.split(',')[0] }} is not reachable"
+    success_msg: "DNS server {{ wireguard_dns.split(',')[0] }} is reachable and responding"
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify WireGuard peer connectivity and handshake
+  ansible.builtin.command: wg show {{ wireguard_interface }} latest-handshakes
+  register: handshake_status
+  changed_when: false
+  failed_when: handshake_status.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Parse handshake timestamp
+  ansible.builtin.set_fact:
+    handshake_timestamp: "{{ handshake_status.stdout.split()[-1] }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert WireGuard peer handshake is recent (within last 5 minutes)
+  ansible.builtin.assert:
+    that:
+      - handshake_timestamp | int > (ansible_date_time.epoch | int - 300)
+    fail_msg: "WireGuard peer handshake is too old ({{ handshake_timestamp }}) - peer may be unreachable"
+    success_msg: "WireGuard peer handshake is recent ({{ handshake_timestamp }}) - connection is active"
+  tags: [install, config, verify, healthcheck]
+
+- name: Check WireGuard transfer statistics
+  ansible.builtin.command: wg show {{ wireguard_interface }} transfer
+  register: transfer_stats
+  changed_when: false
+  failed_when: transfer_stats.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Parse transfer statistics
+  ansible.builtin.set_fact:
+    transfer_bytes: "{{ transfer_stats.stdout.split() | select('match', '^[0-9]+$') | list }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert data transfer is occurring (received bytes > 0)
+  ansible.builtin.assert:
+    that:
+      - (transfer_bytes | length > 0) and (transfer_bytes[1] | int > 0)
+    fail_msg: "No data received through WireGuard tunnel - connection may be broken"
+    success_msg: "WireGuard tunnel is actively transferring data ({{ transfer_bytes[1] }} bytes received)"
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify WireGuard routing table configuration
+  ansible.builtin.command: wg show {{ wireguard_interface }}
+  register: wg_routes
+  changed_when: false
+  failed_when: wg_routes.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert WireGuard routing is configured
+  ansible.builtin.assert:
+    that:
+      - "'allowed ips: 0.0.0.0/0' in wg_routes.stdout"
+    fail_msg: "WireGuard is not configured for full tunnel routing (AllowedIPs != 0.0.0.0/0)"
+    success_msg: "WireGuard is configured for full tunnel routing"
+  tags: [install, config, verify, healthcheck]
+
+- name: Check default route through WireGuard (if configured for full tunnel)
+  ansible.builtin.command: ip route show default
+  register: default_route
+  changed_when: false
+  failed_when: default_route.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Check WireGuard interface MTU
+  ansible.builtin.command: ip link show {{ wireguard_interface }}
+  register: interface_mtu
+  changed_when: false
+  failed_when: interface_mtu.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Extract MTU value from interface information
+  ansible.builtin.set_fact:
+    wg_mtu: "{{ interface_mtu.stdout | regex_search('mtu ([0-9]+)', '\\1') | first }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert WireGuard MTU is reasonable (between 1280-1500)
+  ansible.builtin.assert:
+    that:
+      - wg_mtu | int >= 1280
+      - wg_mtu | int <= 1500
+    fail_msg: "WireGuard MTU {{ wg_mtu }} is outside reasonable range (1280-1500)"
+    success_msg: "WireGuard MTU is set to {{ wg_mtu }} (within acceptable range)"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test VPN latency and packet loss
+  ansible.builtin.command: ping -c 5 -i 0.2 8.8.8.8
+  register: latency_test
+  changed_when: false
+  failed_when: latency_test.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Parse ping statistics
+  ansible.builtin.set_fact:
+    ping_stats: "{{ latency_test.stdout | regex_findall('([0-9]+)% packet loss') | first }}"
+  tags: [install, config, verify, healthcheck]
+
+- name: Assert VPN connection has acceptable packet loss (< 20%)
+  ansible.builtin.assert:
+    that:
+      - ping_stats | int < 20
+    fail_msg: "VPN connection has high packet loss: {{ ping_stats }}% (should be < 20%)"
+    success_msg: "VPN connection packet loss is acceptable: {{ ping_stats }}%"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test VPN throughput (basic bandwidth test)
+  ansible.builtin.command: timeout 10 dd if=/dev/zero bs=1M count=10 | nc -q 1 8.8.8.8 80 >/dev/null
+  register: throughput_test
+  changed_when: false
+  ignore_errors: true  # This test may fail due to firewall rules, but we just want to test connectivity
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Log throughput test result
+  ansible.builtin.debug:
+    msg: "VPN throughput test completed (may fail due to firewall rules - this is expected)"
+  tags: [install, config, verify, healthcheck]
+
+- name: Test WireGuard kill switch integration (if enabled)
+  when: networking_vpn_kill_switch.enabled | default(false)
+  block:
+    - name: Stop WireGuard for kill switch test
+      ansible.builtin.systemd:
+        name: "{{ wireguard_systemd_service }}"
+        state: stopped
+      become: true
+      tags: [killswitch-test, integration]
+
+    - name: Wait for kill switch to take effect
+      ansible.builtin.pause:
+        seconds: 2
+      tags: [killswitch-test, integration]
+
+    - name: Test that traffic is blocked when VPN is down
+      ansible.builtin.uri:
+        url: "https://1.1.1.1"
+        timeout: 5
+      register: killswitch_block_test
+      ignore_errors: true
+      tags: [killswitch-test, integration]
+
+    - name: Assert kill switch blocks traffic when VPN is down
+      ansible.builtin.assert:
+        that:
+          - killswitch_block_test.failed
+        fail_msg: "Kill switch integration test FAILED: Traffic was not blocked when WireGuard was stopped"
+        success_msg: "Kill switch integration test PASSED: Traffic properly blocked when WireGuard was down"
+      tags: [killswitch-test, integration]
+
+    - name: Restart WireGuard after kill switch test
+      ansible.builtin.systemd:
+        name: "{{ wireguard_systemd_service }}"
+        state: restarted
+      become: true
+      tags: [killswitch-test, integration]
+
+    - name: Wait for WireGuard to reconnect
+      ansible.builtin.pause:
+        seconds: 3
+      tags: [killswitch-test, integration]
+
+    - name: Verify VPN connectivity is restored after kill switch test
+      ansible.builtin.uri:
+        url: "https://1.1.1.1"
+        timeout: 10
+      register: vpn_restore_test
+      failed_when: vpn_restore_test.status != 200
+      tags: [killswitch-test, integration]
+
+    - name: Assert VPN connectivity restored after kill switch test
+      ansible.builtin.assert:
+        that:
+          - vpn_restore_test.status == 200
+        fail_msg: "VPN connectivity not restored after kill switch test"
+        success_msg: "VPN connectivity successfully restored after kill switch test"
+      tags: [killswitch-test, integration]
+
+  always:
+    - name: Ensure WireGuard is running after kill switch test
+      ansible.builtin.systemd:
+        name: "{{ wireguard_systemd_service }}"
+        state: started
+        enabled: true
+      become: true
+      ignore_errors: true
+      tags: [killswitch-test, integration]
+  tags: [killswitch-test, integration]

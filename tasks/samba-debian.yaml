@@ -1,0 +1,99 @@
+# ==============================================================================
+# SAMBA ROLE TASKS FOR DEBIAN
+# ------------------------------------------------------------------------------
+#
+# Installs and configures Samba on Debian-based systems.
+#
+# ==============================================================================
+
+---
+
+- name: Install Samba packages
+  ansible.builtin.apt:
+    name:
+      - samba
+      - samba-common-bin
+    state: present
+    update_cache: yes
+  become: true
+  tags: [install]
+
+- name: Create Samba group
+  ansible.builtin.group:
+    name: "{{ networking_samba.group }}"
+    state: present
+  become: true
+  tags: [install]
+
+- name: Create Samba user
+  ansible.builtin.user:
+    name: "{{ networking_samba.user }}"
+    group: "{{ networking_samba.group }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+  become: true
+  tags: [install]
+
+
+- name: Create directories for Samba shares
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ networking_samba.user }}"
+    group: "{{ networking_samba.group }}"
+    mode: '0755'
+  loop: "{{ networking_samba.shares }}"
+  become: true
+  tags: [install]
+
+- name: Configure Samba (smb.conf)
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: "{{ networking_samba.smb_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: Samba Restart
+  tags: [install]
+
+- name: Enable and start Samba service
+  ansible.builtin.systemd:
+    name: smbd
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  become: true
+  tags: [install]
+
+- name: Enable and start Samba nmbd service
+  ansible.builtin.systemd:
+    name: nmbd
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  become: true
+  tags: [install]
+
+- name: Create Samba users
+  ansible.builtin.command: "smbpasswd -a {{ item.name }} -s"
+  args:
+    stdin: "{{ item.password }}\n{{ item.password }}\n"
+  loop: "{{ networking_samba.users | default([]) }}"
+  become: true
+  when: networking_samba.users is defined
+  tags: [install]
+
+- name: Allow Samba ports in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: "{{ item.split('/')[1] if '/' in item else 'tcp' }}"
+  loop:
+    - "137/udp"
+    - "138/udp"
+    - "139/tcp"
+    - "445/tcp"
+  become: true
+  tags: [install]

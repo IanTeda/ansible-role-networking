@@ -48,6 +48,14 @@
     daemon_reload: true
   become: true
 
+- name: Samba Restart
+  ansible.builtin.systemd:
+    name: samba
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+
 - name: UFW Restart
   ansible.builtin.systemd:
     name: ufw
@@ -59,6 +67,14 @@
 - name: Alloy Restart
   ansible.builtin.systemd:
     name: alloy
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+
+- name: WireGuard Restart
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ networking_wireguard_privadovpn.interface_name }}"
     state: restarted
     enabled: true
     daemon_reload: true
