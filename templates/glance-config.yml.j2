@@ -1,0 +1,48 @@
+# =============================================================================
+# Glance Configuration File
+# =============================================================================
+#
+# This file contains the configuration for Glance Dashboard.
+# Glance is a beautiful dashboard for self-hosted services and applications.
+#
+# Configuration Options:
+#   - Server settings
+#   - Theme and branding
+#   - Service definitions
+#
+# Author: IanTeda
+# =============================================================================
+
+# Server configuration
+server:
+  port: {{ networking_glance.web_port | default('8080') }}
+  host: "0.0.0.0"
+
+# Branding
+branding:
+  title: "{{ networking_glance.server_name | default('Glance Dashboard') }}"
+  description: "Beautiful dashboard for self-hosted services"
+  logo: ""
+
+# Theme
+theme:
+  name: "dark"
+  background: "#000000"
+  foreground: "#ffffff"
+
+# Services configuration
+services:
+  - name: "Homepage"
+    url: "https://{{ networking_nginx.hostname }}/homepage/"
+    icon: "home"
+    description: "Homepage dashboard"
+
+  - name: "Nginx"
+    url: "https://{{ networking_nginx.hostname }}/nginx/"
+    icon: "web"
+    description: "Web server status"
+
+# Layout configuration
+layout:
+  columns: 3
+  rows: 2

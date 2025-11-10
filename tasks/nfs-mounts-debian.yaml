@@ -1,0 +1,316 @@
+# ============================================================================
+# Ansible Task File: nfs-mounts-debian.yaml
+# ----------------------------------------------------------------------------
+# This file is managed by Ansible. Manual changes may be overwritten!
+#
+# Purpose: Complete automation of NFSv3 share mounting on Debian-based systems,
+# including package installation, fstab configuration, mount management,
+# permissions setup, and health checks.
+#
+# NFS Version: 3 (as requested)
+# Compatible with: Debian 12 (Bookworm) and similar
+#
+# Managed by: roles/networking/tasks/nfs-mounts-debian.yaml
+# Project: ansible_playbook
+# Maintainer: IanTeda
+# ============================================================================
+
+
+## 00. SET NFS ANSIBLE FACTS
+# -----------------------------------------------------------------------------
+
+- name: Display NFS variables for debugging
+  ansible.builtin.debug:
+    var: networking_nfs
+  tags: [debug]
+
+- name: Set NFS facts for the role
+  ansible.builtin.set_fact:
+    nfs_default_options: "{{ networking_nfs.options }}"
+    nfs_mounts: "{{ networking_nfs.mounts }}"
+    nfs_user: "{{ networking_nfs.user | default('root') }}"
+    nfs_uid: "{{ networking_nfs.uid | default('0') }}"
+    nfs_group: "{{ networking_nfs.group | default('root') }}"
+    nfs_gid: "{{ networking_nfs.gid | default('1000') }}"
+  tags: [always]
+
+# - name: Display NFS facts for debugging
+#   ansible.builtin.debug:
+#     msg:
+#       - "Fact -> nfs_enabled: {{ nfs_enabled }}"
+#       - "Fact -> nfs_version: {{ nfs_version }}"
+#       - "Fact -> nfs_mounts: {{ nfs_mounts | length }} configured"
+#   tags: [debug]
+
+- name: Confirm NFS mount removal
+  ansible.builtin.pause:
+    prompt: |
+      ⚠️  WARNING: NFS Mount Removal Confirmation ⚠️
+
+      You are about to remove all NFS mounts configured for this system.
+
+      This will:
+      🗑️  Unmount all NFS shares
+      🗑️  Remove NFS mount entries from /etc/fstab
+      🗑️  Remove mount point directories
+      🗑️  Remove NFS client packages
+
+      Are you sure you want to proceed with the NFS mount removal? (yes/no)
+  register: nfs_removal_confirmation
+  tags: [never, uninstall]
+
+- name: Aborted NFS mount removal
+  ansible.builtin.fail:
+    msg: |
+      🛑 NFS mount removal aborted by user choice
+
+      The NFS mounts remain configured and operational.
+      No changes have been made to the system.
+  when: not (nfs_removal_confirmation.user_input | bool)
+  tags: [never, uninstall]
+
+
+## 01. INSTALL NFS CLIENT PACKAGES
+# -----------------------------------------------------------------------------
+- name: Install NFS client packages
+  ansible.builtin.apt:
+    name:
+      - nfs-common
+      - rpcbind
+    state: present
+    update_cache: true
+  become: true
+  tags: [install]
+
+- name: Ensure rpcbind service is running and enabled
+  ansible.builtin.systemd:
+    name: rpcbind
+    state: started
+    enabled: true
+  become: true
+  tags: [install]
+
+
+## 02. CREATE MOUNT DIRECTORIES
+# -----------------------------------------------------------------------------
+- name: Ensure NFS group "{{ nfs_group }}" exists
+  ansible.builtin.group:
+    name: "{{ nfs_group }}"
+    # gid: "{{ nfs_gid }}"
+    state: present
+  become: true
+  tags: [install]
+
+- name: Ensure NFS user "{{ nfs_user }}" exists
+  ansible.builtin.user:
+    name: "{{ nfs_user }}"
+    uid: "{{ nfs_uid }}"
+    # group: "{{ nfs_group }}"
+    system: true
+    create_home: false
+    shell: /bin/bash
+    comment: "NFS User Account"
+  become: true
+  tags: [install]
+
+- name: Create NFS mount directories
+  ansible.builtin.file:
+    path: "{{ item.mount_path }}"
+    state: directory
+    owner: "{{ nfs_user }}"
+    group: "{{ nfs_group }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ nfs_mounts }}"
+  become: true
+  tags: [install, config]
+
+
+## 03. CONFIGURE FSTAB ENTRIES
+# -----------------------------------------------------------------------------
+- name: Add NFS mounts to /etc/fstab
+  ansible.builtin.mount:
+    path: "{{ item.mount_path }}"
+    src: "{{ item.server }}:{{ item.share_path }}"
+    fstype: nfs
+    opts: "{{ nfs_default_options }}"
+    state: present
+    boot: yes
+  loop: "{{ nfs_mounts }}"
+  become: true
+  tags: [install, config]
+
+- name: Reload systemd daemon after fstab changes
+  ansible.builtin.systemd:
+    daemon_reload: yes
+  become: true
+  tags: [install, config]
+
+
+## 04. MOUNT NFS SHARES
+# -----------------------------------------------------------------------------
+- name: Mount NFS shares
+  ansible.builtin.command:
+    cmd: "mount {{ item.mount_path }}"
+  loop: "{{ nfs_mounts }}"
+  register: mount_results
+  changed_when: mount_results.rc == 0
+  failed_when: mount_results.rc != 0
+  become: true
+  tags: [install, config]
+
+- name: Verify NFS mounts are active
+  ansible.builtin.shell:
+    cmd: "mount | grep '{{ item.mount_path }}'"
+  loop: "{{ nfs_mounts }}"
+  register: mount_verify
+  changed_when: false
+  failed_when: mount_verify.rc != 0
+  become: true
+  tags: [install, config, verify]
+
+
+## 05. SET MOUNT PERMISSIONS
+# -----------------------------------------------------------------------------
+- name: Set permissions on mounted NFS shares
+  ansible.builtin.file:
+    path: "{{ item.mount_path }}"
+    owner: "{{ nfs_user }}"
+    group: "{{ nfs_group }}"
+    mode: "{{ item.mode | default('0755') }}"
+    state: directory
+  loop: "{{ nfs_mounts }}"
+  become: true
+  tags: [install, config]
+
+
+## 06. HEALTH CHECKS AND VERIFICATION
+# -----------------------------------------------------------------------------
+- name: Test NFS mount accessibility
+  ansible.builtin.shell:
+    cmd: "ls -la {{ item.mount_path }} | head -5"
+  loop: "{{ nfs_mounts }}"
+  register: nfs_access_test
+  changed_when: false
+  failed_when: nfs_access_test.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Check NFS mount details
+  ansible.builtin.command:
+    cmd: "df -h {{ item.mount_path }}"
+  loop: "{{ nfs_mounts }}"
+  register: nfs_df_check
+  changed_when: false
+  failed_when: nfs_df_check.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Verify NFS server connectivity
+  ansible.builtin.command:
+    cmd: "showmount -e {{ item.server }}"
+  loop: "{{ nfs_mounts }}"
+  register: nfs_showmount
+  changed_when: false
+  failed_when: false  # Don't fail if showmount is not available on server
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+- name: Test NFS mount write permissions
+  ansible.builtin.shell:
+    cmd: |
+      TEST_FILE="{{ item.mount_path }}/.nfs-healthcheck-{{ ansible_date_time.epoch }}.test"
+      echo "NFS Health Check - {{ ansible_date_time.iso8601 }}" > "$TEST_FILE"
+      if [ $? -eq 0 ]; then
+        echo "Write test successful for {{ item.mount_path }}"
+        rm "$TEST_FILE"
+        if [ $? -eq 0 ]; then
+          echo "Remove test successful for {{ item.mount_path }}"
+          exit 0
+        else
+          echo "Remove test failed for {{ item.mount_path }}"
+          exit 1
+        fi
+      else
+        echo "Write test failed for {{ item.mount_path }}"
+        exit 1
+      fi
+  loop: "{{ nfs_mounts }}"
+  register: nfs_write_test
+  changed_when: false
+  failed_when: nfs_write_test.rc != 0
+  become: true
+  tags: [install, config, verify, healthcheck]
+
+
+## 07. DISPLAY NFS MOUNT INFORMATION
+# -----------------------------------------------------------------------------
+- name: Display NFS mount configuration summary
+  ansible.builtin.debug:
+    msg: |
+      - ✅ NFS Configuration Summary:
+      - 
+      - Total Mounts: {{ nfs_mounts | length }}
+      - 
+      {% for mount in nfs_mounts %}
+      - Mount {{ loop.index }}:
+      -  Server: {{ mount.server }}
+      -  Share: {{ mount.share_path }}
+      -  Mount Point: {{ mount.mount_path }}
+      -  Options: {{ mount.options | default(nfs_default_options) }}
+      -  Owner: {{ mount.owner | default('root') }}:{{ mount.group | default('root') }}
+      -  Mode: {{ mount.mode | default('0755') }}
+      {% endfor %}
+  tags: [install, config, verify]
+
+## 08. UNINSTALLATION TASKS
+# -----------------------------------------------------------------------------
+- name: Unmount NFS shares before removal
+  ansible.builtin.command:
+    cmd: "umount {{ item.mount_path }}"
+  loop: "{{ nfs_mounts }}"
+  register: umount_results
+  changed_when: umount_results.rc == 0
+  failed_when: false  # Don't fail if already unmounted
+  become: true
+  when: nfs_removal_confirmation.user_input | bool
+  tags: [never, uninstall]
+
+- name: Remove NFS mount entries from /etc/fstab
+  ansible.builtin.mount:
+    path: "{{ item.mount_path }}"
+    src: "{{ item.server }}:{{ item.share_path }}"
+    fstype: nfs
+    state: absent
+  loop: "{{ nfs_mounts }}"
+  become: true
+  when: nfs_removal_confirmation.user_input | bool
+  tags: [never, uninstall]
+
+- name: Remove NFS mount directories
+  ansible.builtin.file:
+    path: "{{ item.mount_path }}"
+    state: absent
+  loop: "{{ nfs_mounts }}"
+  become: true
+  when: nfs_removal_confirmation.user_input | bool
+  tags: [never, uninstall]
+
+- name: Remove NFS client packages
+  ansible.builtin.apt:
+    name:
+      - nfs-common
+      - rpcbind
+    state: absent
+    purge: true
+  become: true
+  when: nfs_removal_confirmation.user_input | bool
+  tags: [never, uninstall]
+
+- name: Stop and disable rpcbind service
+  ansible.builtin.systemd:
+    name: rpcbind
+    state: stopped
+    enabled: false
+  become: true
+  when: nfs_removal_confirmation.user_input | bool
+  tags: [never, uninstall]

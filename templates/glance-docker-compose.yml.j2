@@ -1,0 +1,60 @@
+# =============================================================================
+# Glance Docker Compose Template
+# =============================================================================
+#
+# This template configures Glance Dashboard using Docker Compose.
+# Glance is a beautiful dashboard for self-hosted services and applications.
+#
+# Configuration:
+#   - Container settings and networking
+#   - Volume mounts for configuration
+#   - Environment variables
+#   - Health checks
+#
+# Author: IanTeda
+# =============================================================================
+
+version: '3.8'
+
+services:
+  glance:
+    image: glanceapp/glance:latest
+    container_name: {{ networking_glance.container_name | default('glance') }}
+    restart: unless-stopped
+
+    # Networking
+    ports:
+      - "127.0.0.1:{{ networking_glance.web_port | default('8080') }}:8080"
+
+    # Volumes
+    volumes:
+      - {{ networking_glance.config_dir | default('/var/lib/glance') }}/config.yml:/app/config.yml:ro
+
+    # Environment
+    environment:
+      - PUID={{ networking_glance.user | default('glance') }}
+      - PGID={{ networking_glance.group | default('glance') }}
+      - TZ={{ networking_glance.timezone | default('America/New_York') }}
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M

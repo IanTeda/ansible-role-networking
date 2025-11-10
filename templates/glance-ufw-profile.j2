@@ -1,0 +1,18 @@
+# =============================================================================
+# Glance UFW Application Profile
+# =============================================================================
+#
+# This file defines the UFW application profile for Glance Dashboard.
+# It allows secure access to the Glance web interface from specified networks.
+#
+# Profile: Glance
+# Title: Glance Dashboard
+# Description: Beautiful dashboard for self-hosted services
+#
+# Author: IanTeda
+# =============================================================================
+
+[Glance]
+title=Glance Dashboard
+description=Beautiful dashboard for self-hosted services
+ports={{ networking_glance.web_port | default('8080') }}/tcp

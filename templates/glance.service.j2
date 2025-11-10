@@ -1,0 +1,46 @@
+# =============================================================================
+# Glance Systemd Service Template
+# =============================================================================
+#
+# This template configures the Glance systemd service for proper operation.
+# Glance is a beautiful dashboard for self-hosted services and applications.
+#
+# Service Configuration:
+#   - User and group management
+#   - Working directory setup
+#   - Environment variables
+#   - Restart policies
+#
+# Author: IanTeda
+# =============================================================================
+
+[Unit]
+Description=Glance Dashboard
+After=network.target
+
+[Service]
+User={{ glance_user }}
+Group={{ glance_group }}
+Type=simple
+ExecStart=/usr/bin/python3 {{ glance_config_dir }}/glance/glance.py --config {{ glance_config_dir }}/config.yml
+WorkingDirectory={{ glance_config_dir }}/glance
+TimeoutStopSec=20
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+# Environment variables
+Environment=PYTHONPATH={{ glance_config_dir }}/glance
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths={{ glance_config_dir }}
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

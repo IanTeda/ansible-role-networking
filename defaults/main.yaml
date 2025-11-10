@@ -80,11 +80,11 @@ networking_lets_encrypt:
   private_key_path: '/etc/letsencrypt/live/{{ ansible_fqdn }}/privkey.pem'
   certificate_path: "/etc/letsencrypt/live/{{ ansible_fqdn }}/fullchain.pem"
 
-# Network configuration
 networking_networks: 
   local: "{{ vault_networks_local }}"
   lan_gateway_ip: '{{ vault_networks_lan_gateway_ip }}'
   unifi_vpn_client_subnet: '{{ vault_networks_unifi_vpn_client_subnet }}'
+  primary_network_interface: 'eth0'      
 
 ## Nginx Configuration
 networking_nginx:
@@ -152,3 +152,73 @@ networking_vpn_kill_switch:
   allow_dhcp: true
   log_dropped_packets: false
   test_enabled: false
+
+## Glance Configuration
+networking_glance:
+  # Installation method: 'debian' or 'docker'
+  install_method: "docker"                        # Recommended: docker
+
+  # Service configuration
+  web_port: 8080                                  # Glance web UI port
+
+  # Directory configuration
+  config_dir: "/var/lib/glance"                   # Configuration directory
+
+  # Docker configuration (when install_method: docker)
+  docker_image: "glanceapp/glance:latest"
+  container_name: "glance"
+  timezone: "America/New_York"
+
+  # Direct installation configuration (when install_method: debian)
+  user: "glance"
+  group: "glance"
+
+  # Network settings
+  allowed_networks: "192.168.1.0/255.255.255.0"   # Networks allowed to access Glance
+
+  # Nginx location block settings
+  nginx_location_url: "https://{{ networking_nginx.hostname }}/glance/"  # URL for accessing Glance via nginx
+
+  # Monitoring settings
+  metrics_enabled: false                          # Enable Prometheus metrics collection
+  metrics_port: 9463                              # Prometheus metrics port
+  docker_metrics_enabled: false                   # Enable Docker container metrics collection
+
+  # Advanced settings
+  debug_logging: false
+
+# NFS (Network File System) Configuration
+networking_nfs:
+  # The user to use when creating nfs mount points
+  user: 'root'
+  # Check user id on NAS
+  uid: "1000"
+
+  # The group to use when creating the nfs mount points
+  group: 'root'
+  # Check user group id on NAS
+  gid: "1000"
+
+  # Mount options for NFSv3
+  # Enable NFS client functionality
+  # NFS version (3, 4, or 4.1)
+  # Mount timeout in seconds
+  # Number of retransmissions
+  # Read buffer size
+  # Write buffer size
+  options: 'vers=3,soft,timeo=30,retrans=3,rsize=32768,wsize=32768,nolock'
+
+  # NFS shares to mount (array of mount configurations)
+  # Each mount should have: server, share, mount_point, owner, group, mode
+  mounts:
+    # Example configuration:
+    # - mount_point: '/mnt/nfs-data'
+    #   server: 'use-ip-address'
+    #   share: '/mnt/nfs-data'
+    #   owner: 'root'
+    #   group: 'root'
+    #   mode: '2755'
+    - mount_point: "/mnt/nas/media"
+      server: "192.168.1.3"
+      share: "/mnt/user/media"
+      mode: "2755"

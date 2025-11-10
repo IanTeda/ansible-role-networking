@@ -1,0 +1,51 @@
+# =============================================================================
+# Glance Nginx Location Block Template
+# =============================================================================
+#
+# This template configures the Nginx location block for Glance Dashboard.
+# It provides reverse proxy functionality with proper headers and security.
+#
+# Configuration:
+#   - Reverse proxy to Glance web interface
+#   - WebSocket support for real-time updates
+#   - Security headers
+#   - Proper error handling
+#
+# Author: IanTeda
+# =============================================================================
+
+location /glance/ {
+    # Proxy to Glance web interface
+    proxy_pass http://127.0.0.1:{{ networking_glance.web_port | default('8080') }}/;
+    proxy_http_version 1.1;
+
+    # WebSocket support
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+
+    # Standard proxy headers
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Timeout settings
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
+    # Buffer settings
+    proxy_buffering on;
+    proxy_buffer_size 4k;
+    proxy_buffers 8 4k;
+
+    # Error handling
+    proxy_intercept_errors on;
+    error_page 502 503 504 /50x.html;
+}

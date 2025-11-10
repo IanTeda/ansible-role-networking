@@ -73,6 +73,18 @@
       tags:
         - homepage
 
+    - name: Install and Configure Glance (Debian)
+      ansible.builtin.include_tasks: glance-debian.yaml
+      when: networking_glance.install_method == "debian"
+      tags:
+        - glance
+
+    - name: Install and Configure Glance (Docker)
+      ansible.builtin.include_tasks: glance-docker.yaml
+      when: networking_glance.install_method == "docker"
+      tags:
+        - glance
+
     - name: Install and Configure Arti
       ansible.builtin.include_tasks: arti-debian.yaml
       tags:
@@ -93,6 +105,10 @@
       tags:
         - samba
 
+    - name: Install and Configure NFS Mounts
+      ansible.builtin.include_tasks: nfs-mounts-debian.yaml
+      tags:
+        - nfs
 
 
 ## RedHat family tasks block

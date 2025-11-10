@@ -1,0 +1,295 @@
+# =============================================================================
+# Ansible Role: Networking - Glance Dashboard Docker Installation
+# =============================================================================
+#
+# This file contains tasks for installing Glance Dashboard using Docker Compose.
+# Glance is a beautiful dashboard for self-hosted services and applications.
+#
+# Features:
+#   - Docker container deployment
+#   - Configurable server settings and user permissions
+#   - Firewall configuration for secure access
+#   - Nginx reverse proxy integration
+#   - Alloy monitoring integration
+#
+# Requirements:
+#   - Debian/Ubuntu system
+#   - Internet connectivity
+#   - Root/sudo access
+#   - Docker and Docker Compose
+#
+# Author: IanTeda
+# =============================================================================
+
+## Glance Docker Role Variables and Facts
+# -----------------------------------------------------------------------------
+
+- name: Display Glance variables for debugging
+  ansible.builtin.debug:
+    var: networking_glance
+  tags: [debug]
+
+- name: Set Glance Docker facts for the role
+  ansible.builtin.set_fact:
+    glance_user: "{{ networking_glance.user | default('glance') }}"
+    glance_group: "{{ networking_glance.group | default('glance') }}"
+    glance_web_port: "{{ networking_glance.web_port | default('8080') }}"
+    glance_config_dir: "{{ networking_glance.config_dir | default('/var/lib/glance') }}"
+    glance_allowed_networks: "{{ networking_glance.allowed_networks | default('192.168.1.0/255.255.255.0') }}"
+    glance_server_name: "{{ networking_glance.server_name | default('Glance Dashboard') }}"
+    glance_container_name: "{{ networking_glance.container_name | default('glance') }}"
+  tags: [always]
+
+
+## Install Glance via Docker (Recommended)
+# -----------------------------------------------------------------------------
+
+- name: Install Docker and prerequisites for Glance
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - curl
+      - wget
+    state: present
+    update_cache: true
+  become: true
+  tags: [install, docker]
+
+- name: Create Glance system user and group
+  ansible.builtin.group:
+    name: "{{ glance_group }}"
+    state: present
+    system: true
+  become: true
+  tags: [install, docker]
+
+- name: Create Glance system user
+  ansible.builtin.user:
+    name: "{{ glance_user }}"
+    group: "{{ glance_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ glance_config_dir }}"
+    create_home: false
+  become: true
+  tags: [install, docker]
+
+- name: Create Glance Docker directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ glance_user }}"
+    group: "{{ glance_group }}"
+    mode: '0755'
+  loop:
+    - "{{ glance_config_dir }}"
+  become: true
+  tags: [install, docker]
+
+- name: Create Glance configuration file
+  ansible.builtin.template:
+    src: glance-config.yml.j2
+    dest: "{{ glance_config_dir }}/config.yml"
+    owner: "{{ glance_user }}"
+    group: "{{ glance_group }}"
+    mode: '0644'
+  become: true
+  tags: [install, docker]
+
+- name: Create Glance Docker Compose file
+  ansible.builtin.template:
+    src: glance-docker-compose.yml.j2
+    dest: "{{ glance_config_dir }}/docker-compose.yml"
+    owner: "{{ glance_user }}"
+    group: "{{ glance_group }}"
+    mode: '0644'
+  become: true
+  tags: [install, docker]
+
+- name: Deploy Glance Docker Compose stack
+  community.docker.docker_compose:
+    project_src: "{{ glance_config_dir }}"
+    state: present
+    remove_orphans: true
+  become: true
+  tags: [install, docker]
+
+- name: Wait for Glance Docker container to be healthy
+  ansible.builtin.wait_for:
+    port: "{{ glance_web_port }}"
+    timeout: 120
+  become: true
+  tags: [install, docker]
+
+
+## Configure Firewall for Glance Docker
+# -----------------------------------------------------------------------------
+
+- name: Deploy Glance Docker UFW application profile
+  ansible.builtin.template:
+    src: templates/glance-docker-ufw-profile.j2
+    dest: /etc/ufw/applications.d/glance
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, firewall]
+
+- name: Allow Glance Docker access from allowed networks
+  community.general.ufw:
+    rule: allow
+    name: Glance
+    from_ip: "{{ item }}"
+  loop: "{{ glance_allowed_networks.split(',') | map('trim') | list }}"
+  become: true
+  tags: [install, config, firewall]
+
+- name: Reload UFW to recognize new application profile
+  community.general.ufw:
+    state: reloaded
+  become: true
+  tags: [install, config, firewall]
+
+
+## Configure Nginx Location Block for Glance Docker
+# -----------------------------------------------------------------------------
+
+- name: Deploy Glance Docker Nginx location block
+  ansible.builtin.template:
+    src: templates/glance-nginx-location.j2
+    dest: "/etc/nginx/conf.d/glance-location.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: reload nginx
+  tags: [install, config, nginx]
+
+- name: Test Nginx configuration after Glance Docker location block deployment
+  ansible.builtin.command: nginx -t
+  become: true
+  tags: [install, config, nginx]
+
+
+## Configure Alloy Monitoring for Glance Docker
+# -----------------------------------------------------------------------------
+
+- name: Deploy Glance Docker Alloy configuration block
+  ansible.builtin.template:
+    src: templates/glance-alloy-block.alloy.j2
+    dest: "/etc/alloy/glance.alloy"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, monitoring]
+
+- name: Add Glance Docker Alloy import to main config
+  ansible.builtin.lineinfile:
+    path: "/etc/alloy/config.alloy"
+    line: 'import "apps/glance.alloy"'
+    state: present
+    create: false
+  become: true
+  tags: [install, config, monitoring]
+
+- name: Reload Alloy service to pick up new configuration
+  ansible.builtin.systemd:
+    name: alloy
+    state: reloaded
+  become: true
+  tags: [install, config, monitoring]
+
+
+## Verify Glance Docker Installation
+# -----------------------------------------------------------------------------
+
+- name: Verify UFW is enabled and active
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+  become: true
+  tags: [verify, firewall]
+
+- name: Display UFW status
+  ansible.builtin.debug:
+    msg: "{{ ufw_status.stdout_lines }}"
+  tags: [verify, firewall]
+
+- name: Verify Glance Docker UFW application profile exists
+  ansible.builtin.stat:
+    path: /etc/ufw/applications.d/glance
+  register: glance_profile_stat
+  become: true
+  tags: [verify, firewall]
+
+- name: Confirm Glance Docker application profile installation
+  ansible.builtin.debug:
+    msg: "Glance UFW application profile is {{ 'installed' if glance_profile_stat.stat.exists else 'missing' }}"
+  tags: [verify, firewall]
+
+- name: Check Glance Docker application rules in UFW
+  ansible.builtin.shell: |
+    echo "=== Glance Rules ==="
+    ufw status | grep -i glance || echo "No Glance rules found"
+  register: glance_rules
+  changed_when: false
+  become: true
+  tags: [verify, firewall]
+
+- name: Display Glance Docker UFW rules
+  ansible.builtin.debug:
+    msg: |
+      Glance UFW Rules:
+      {{ glance_rules.stdout }}
+  tags: [verify, firewall]
+
+- name: Verify Glance Docker container is running
+  community.docker.docker_container_info:
+    name: "{{ glance_container_name }}"
+  register: glance_container_info
+  become: true
+  tags: [verify]
+
+- name: Confirm Glance Docker container status
+  ansible.builtin.debug:
+    msg: "Glance Docker container '{{ glance_container_name }}' is {{ glance_container_info.container.State.Status }}"
+  tags: [verify]
+
+- name: Test Glance Docker web UI port accessibility from localhost
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ glance_web_port }}"
+    timeout: 5
+  ignore_errors: true
+  register: glance_web_test
+  tags: [verify]
+
+- name: Report Glance Docker web UI local connectivity
+  ansible.builtin.debug:
+    msg: "Glance web UI port {{ glance_web_port }} is {{ 'accessible' if glance_web_test.elapsed < 5 else 'not accessible' }} from localhost"
+  tags: [verify]
+
+- name: Verify Glance Docker Compose file exists
+  ansible.builtin.stat:
+    path: "{{ glance_config_dir }}/docker-compose.yml"
+  register: glance_compose_stat
+  become: true
+  tags: [verify]
+
+- name: Confirm Glance Docker Compose file
+  ansible.builtin.debug:
+    msg: "Glance Docker Compose file {{ glance_config_dir }}/docker-compose.yml {{ 'exists' if glance_compose_stat.stat.exists else 'does not exist' }}"
+  tags: [verify]
+
+- name: Verify Glance Docker Nginx location block exists
+  ansible.builtin.stat:
+    path: /etc/nginx/conf.d/glance-location.conf
+  register: glance_nginx_stat
+  tags: [verify, nginx]
+
+- name: Confirm Glance Docker Nginx location block installation
+  ansible.builtin.debug:
+    msg: "Glance Nginx location block is {{ 'installed' if glance_nginx_stat.stat.exists else 'missing' }}"
+  tags: [verify, nginx]
