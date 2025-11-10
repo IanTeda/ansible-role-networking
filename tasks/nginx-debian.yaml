@@ -136,11 +136,12 @@
 # This section sets up the configuration files file for the service
 # -----------------------------------------------------------------------------
 
-- name: Install Nginx proxy and php support
+- name: Install Nginx and dependencies
   ansible.builtin.apt:
     name:
       - nginx
       - php-fpm
+      - python3-cryptography
     state: present
     update_cache: yes
   become: true
