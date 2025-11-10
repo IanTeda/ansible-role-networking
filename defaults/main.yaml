@@ -206,7 +206,7 @@ networking_nfs:
   # Number of retransmissions
   # Read buffer size
   # Write buffer size
-  options: 'vers=3,soft,timeo=30,retrans=3,rsize=32768,wsize=32768,nolock'
+  options: 'vers=3,soft,timeo=30,retrans=3,rsize=32768,wsize=32768,nolock,all_squash,anonuid=1042,anongid=100'
 
   # NFS shares to mount (array of mount configurations)
   # Each mount should have: server, share, mount_point, owner, group, mode

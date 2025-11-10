@@ -29,9 +29,7 @@
     nfs_default_options: "{{ networking_nfs.options }}"
     nfs_mounts: "{{ networking_nfs.mounts }}"
     nfs_user: "{{ networking_nfs.user | default('root') }}"
-    nfs_uid: "{{ networking_nfs.uid | default('0') }}"
     nfs_group: "{{ networking_nfs.group | default('root') }}"
-    nfs_gid: "{{ networking_nfs.gid | default('1000') }}"
   tags: [always]
 
 # - name: Display NFS facts for debugging
@@ -96,7 +94,6 @@
 - name: Ensure NFS group "{{ nfs_group }}" exists
   ansible.builtin.group:
     name: "{{ nfs_group }}"
-    # gid: "{{ nfs_gid }}"
     state: present
   become: true
   tags: [install]
@@ -104,14 +101,20 @@
 - name: Ensure NFS user "{{ nfs_user }}" exists
   ansible.builtin.user:
     name: "{{ nfs_user }}"
-    uid: "{{ nfs_uid }}"
-    # group: "{{ nfs_group }}"
     system: true
     create_home: false
     shell: /bin/bash
     comment: "NFS User Account"
   become: true
   tags: [install]
+
+- name: Ensure default user is in NFS group
+  ansible.builtin.user:
+    name: "{{ vault_default_user_name | default(ansible_user) }}"
+    groups: "{{ nfs_group }}"
+    append: true
+  become: true
+  tags: [install, config]
 
 - name: Create NFS mount directories
   ansible.builtin.file:
@@ -239,28 +242,38 @@
   changed_when: false
   failed_when: nfs_write_test.rc != 0
   become: true
+  become_user: "{{ nfs_user }}"
   tags: [install, config, verify, healthcheck]
 
 
 ## 07. DISPLAY NFS MOUNT INFORMATION
 # -----------------------------------------------------------------------------
 - name: Display NFS mount configuration summary
-  ansible.builtin.debug:
-    msg: |
-      - ✅ NFS Configuration Summary:
-      - 
-      - Total Mounts: {{ nfs_mounts | length }}
-      - 
-      {% for mount in nfs_mounts %}
-      - Mount {{ loop.index }}:
-      -  Server: {{ mount.server }}
-      -  Share: {{ mount.share_path }}
-      -  Mount Point: {{ mount.mount_path }}
-      -  Options: {{ mount.options | default(nfs_default_options) }}
-      -  Owner: {{ mount.owner | default('root') }}:{{ mount.group | default('root') }}
-      -  Mode: {{ mount.mode | default('0755') }}
-      {% endfor %}
+  ansible.builtin.shell: |
+    echo "✅ NFS Configuration Summary:"
+    echo ""
+    echo "Total Mounts: {{ nfs_mounts | length }}"
+    echo ""
+    {% for mount in nfs_mounts %}
+    echo "Mount {{ loop.index }}:"
+    echo "  Server: {{ mount.server }}"
+    echo "  Share: {{ mount.share_path }}"
+    echo "  Mount Point: {{ mount.mount_path }}"
+    echo "  Options: {{ mount.options | default(nfs_default_options) }}"
+    echo "  Owner: {{ mount.owner | default('root') }}:{{ mount.group | default('root') }}"
+    echo "  Mode: {{ mount.mode | default('0755') }}"
+    echo ""
+    {% endfor %}
+  register: nfs_summary
+  changed_when: false
   tags: [install, config, verify]
+
+- name: Print NFS mount configuration summary
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ nfs_summary.stdout_lines }}"
+  tags: [install, config, verify]
+
 
 ## 08. UNINSTALLATION TASKS
 # -----------------------------------------------------------------------------
