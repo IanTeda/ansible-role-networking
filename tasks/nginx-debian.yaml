@@ -213,7 +213,7 @@
     mode: '0644'
     backup: yes
   become: true
-  tags: [install, config]
+  tags: [install, config, nginx]
 
 - name: Remove default Nginx site
   ansible.builtin.file:
@@ -230,7 +230,7 @@
     group: root
     mode: '0644'
   become: true
-  tags: [install, config]
+  tags: [install, config, nginx]
 
 - name: Enable default site
   ansible.builtin.file:
@@ -239,7 +239,7 @@
     state: link
   become: true
   notify: Nginx Restart
-  tags: [install, config]
+  tags: [install, config, nginx]
 
 - name: Create web root directory
   ansible.builtin.file:

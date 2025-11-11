@@ -327,6 +327,7 @@
   tags:
     - install
     - tls
+    - lets-encrypt
 
 - name: Add nginx user (www-data) to the Let's Encrypt group so it can read the certificates
   ansible.builtin.user:

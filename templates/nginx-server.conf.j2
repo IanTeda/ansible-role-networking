@@ -12,7 +12,8 @@
 #   which will be automatically included via the include directive below
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name {{ nginx_server_name }} localhost;
     
     # SSL Settings
