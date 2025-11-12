@@ -215,6 +215,9 @@ networking_ufw:
   user: 'root'
   group: 'root'
 
+networking_unifi:
+  host: 'unifi.homenetwork.com'
+  path: 'unifi'
 
 ## WireGuard VPN Configuration
 networking_wireguard_vpn:

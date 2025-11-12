@@ -12,6 +12,8 @@
 #   - Ports: Multiple TCP/UDP ports for device adoption and management
 #
 # Required Ports for UniFi Device Communication:
+#   TCP 80    - Web interface (HTTP, for initial setup)
+#   TCP 8080  - Device inform (adoption and status updates)
 #   TCP 8443  - Device communication (HTTPS)
 #   TCP 8880  - Device communication (Needed if using the Guest Portal/Hotspot)
 #   TCP 8843  - Device communication (Needed if using the Guest Portal/Hotspot)
@@ -32,4 +34,4 @@
 [UniFi Network Server]
 title=UniFi Network Server
 description=UniFi Network Server management interface and device communication ports
-ports=8443/tcp|8880/tcp|8843/tcp|6789/tcp|3478/udp|10001/udp|11443/tcp|5514/udp
+ports=80/tcp|8080/tcp|8443/tcp|8880/tcp|8843/tcp|6789/tcp|3478/udp|10001/udp|11443/tcp|5514/udp

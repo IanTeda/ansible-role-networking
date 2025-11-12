@@ -46,6 +46,8 @@
 - name: Set Unifi facts for the role
   ansible.builtin.set_fact:
     unifi_allowed_networks: "{{ networking_networks.local | default('192.168.1.0/24') }}"
+    nginx_server_name: "{{ networking_unifi.subdomain | default('unifi.homenetwork.com')}}"
+    unifi_nginx_path: "{{ networking_unifi.path | default('unifi')}}"
   tags: [always]
 
 - name: Deploy Unifi UFW application profile
@@ -79,3 +81,35 @@
     state: reloaded
   become: true
   tags: [config, firewall]
+
+- name: Deploy Unifi nginx server config to sites-available
+  ansible.builtin.template:
+    src: unifi-server-nginx-server.conf.j2
+    dest: "/etc/nginx/sites-available/{{ unifi_nginx_path }}.{{ nginx_server_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [config, nginx]
+
+- name: Enable Unifi nginx server config by linking to sites-enabled
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ unifi_nginx_path }}.{{ nginx_server_name }}"
+    dest: "/etc/nginx/sites-enabled/{{ unifi_nginx_path }}.{{ nginx_server_name }}"
+    owner: root
+    group: root
+    state: linkc 
+  become: true
+  tags: [config, nginx]
+
+- name: Test nginx configuration
+  ansible.builtin.command: nginx -t
+  become: true
+  tags: [config, nginx]
+
+- name: Reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  become: true
+  tags: [config, nginx]
