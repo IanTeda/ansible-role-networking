@@ -1,0 +1,267 @@
+# ==============================================================================
+# NETWORKING ROLE - UNIFI NETWORK SERVER INSTALLATION TASKS (Debian)
+# ==============================================================================
+#
+# File: roles/networking/tasks/unifi-server-debian.yaml
+# Purpose: Install and configure UniFi Network Server on Debian systems
+#
+# UniFi Network Server provides:
+#   - UniFi Network Controller
+#   - UniFi Protect (camera management)
+#   - UniFi Access (door access control)
+#   - UniFi Talk (VoIP)
+#
+# UFW Application Profile: UniFi
+#   - Defines all required ports for device communication
+#   - Allows access from local networks only
+#   - Use: ufw allow "UniFi" from <local_network>
+#
+# Required Ports for UniFi Device Communication:
+#   TCP 8080  - Device communication (HTTP)
+#   TCP 8443  - Device communication (HTTPS)
+#   TCP 8880  - Device communication (HTTP alternative)
+#   TCP 8843  - Device communication (HTTPS alternative)
+#   TCP 6789  - UniFi mobile app communication
+#   UDP 3478  - STUN (device discovery and NAT traversal)
+#   UDP 10001 - Device discovery
+#   TCP 443   - Web interface (HTTPS)
+#   TCP 80    - Web interface (HTTP, for initial setup)
+#
+# Requirements:
+#   - Debian-based system (Raspberry Pi OS recommended for ARM64)
+#   - Minimum 2GB RAM, 10GB storage (4GB+ RAM recommended)
+#   - Internet connectivity
+#
+# Post-Installation:
+#   - Access UniFi at https://<server-ip>:8443
+#   - Complete initial setup wizard
+#   - Adopt UniFi devices through the controller
+#
+# Notes:
+#   - Based on official Ubiquiti documentation
+#   - https://help.ui.com/hc/en-us/articles/220066768-Updating-and-Installing-Self-Hosted-UniFi-Network-Servers-Linux
+#
+# ==============================================================================
+
+---
+
+- name: Display UniFi Network Server variables for debugging
+  ansible.builtin.debug:
+    var: unifi_server
+  tags: [debug]
+
+- name: Set UniFi Network Server facts for the role
+  ansible.builtin.set_fact:
+    unifi_server_allowed_networks: "{{ networking_networks.local | default('192.168.1.0/24') }}"
+    # unifi_server_nginx_location_url: "{{ unifi_server.nginx_location_url }}"
+  tags: [always]
+
+## UniFi Network Server Installation Tasks
+# -----------------------------------------------------------------------------
+
+- name: Check if running on Raspberry Pi
+  ansible.builtin.command: grep -q "Raspberry Pi" /proc/device-tree/model
+  register: rpi_check
+  failed_when: false
+  changed_when: false
+  tags: [install]
+
+- name: Warn if not running on Raspberry Pi
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  WARNING: UniFi Network Server is optimized for Raspberry Pi hardware.
+      Installation on non-Raspberry Pi systems may not work properly.
+  when: rpi_check.rc != 0
+  tags: [install]
+
+- name: Check system memory (UniFi Network Server requires minimum 2GB)
+  ansible.builtin.shell: free -g | awk 'NR==2{print $2}'
+  register: memory_check
+  changed_when: false
+  tags: [install]
+
+- name: Warn if system has less than 2GB RAM
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  WARNING: System has {{ memory_check.stdout }}GB RAM.
+      UniFi Network Server recommends minimum 2GB RAM for optimal performance.
+  when: memory_check.stdout | int < 2
+  tags: [install]
+
+- name: Install prerequisites for UniFi Network Server
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - lsb-release
+      - ca-certificates
+      - apt-transport-https
+      - binutils
+      - coreutils
+      - adduser
+      - libcap2
+      - logrotate
+      - openjdk-11-jre-headless  # Required for UniFi
+    state: present
+    update_cache: true
+  tags: [install]
+
+- name: Install MongoDB (required for UniFi versions <5.13)
+  ansible.builtin.apt:
+    name: mongodb
+    state: present
+  become: true
+  tags: [install]
+
+- name: Add UniFi GPG key
+  ansible.builtin.get_url:
+    url: https://dl.ui.com/unifi/unifi-repo.gpg
+    dest: /etc/apt/keyrings/unifi-repo.gpg
+    mode: '0644'
+  become: true
+  tags: [install]
+
+- name: Add UniFi repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/unifi-repo.gpg] https://www.ui.com/downloads/unifi/debian stable ubiquiti"
+    state: present
+    filename: unifi
+  become: true
+  tags: [install]
+
+- name: Update APT cache after adding UniFi repository
+  ansible.builtin.apt:
+    update_cache: true
+  become: true
+  tags: [install]
+
+- name: Install UniFi Network Server core package
+  ansible.builtin.apt:
+    name: unifi
+    state: present
+    update_cache: true
+  become: true
+  tags: [install]
+
+- name: Enable and start UniFi service
+  ansible.builtin.systemd:
+    name: unifi
+    enabled: true
+    state: started
+  become: true
+  tags: [install]
+
+- name: Wait for UniFi Network Server to initialize
+  ansible.builtin.pause:
+    seconds: 30
+  tags: [install]
+
+- name: Check UniFi service status
+  ansible.builtin.systemd:
+    name: unifi
+    state: started
+  register: unifi_status
+  tags: [install, verify, healthcheck]
+
+- name: Verify UniFi Network Server is running
+  ansible.builtin.assert:
+    that:
+      - unifi_status.status.ActiveState == 'active'
+      - unifi_status.status.SubState == 'running'
+    fail_msg: "UniFi Network Server service is not running properly"
+    success_msg: "UniFi Network Server service is running successfully"
+  tags: [install, verify, healthcheck]
+
+- name: Get UniFi version
+  ansible.builtin.shell: dpkg -l | grep '^ii.*unifi' | awk '{print $3}'
+  register: unifi_version
+  changed_when: false
+  tags: [install, verify, healthcheck]
+
+- name: Display UniFi Network Server installation information
+  ansible.builtin.debug:
+    msg: |
+      🎉 UniFi Network Server Installation Complete!
+
+      UniFi Version: {{ unifi_version.stdout }}
+      Service Status: {{ unifi_status.status.ActiveState }}/{{ unifi_status.status.SubState }}
+
+      Access UniFi at:
+      - Local: https://{{ ansible_default_ipv4.address }}:8443
+      - Cloud: https://unifi.ui.com (after setup)
+
+      Initial Setup:
+      1. Open https://{{ ansible_default_ipv4.address }}:8443 in your browser
+      2. Follow the setup wizard
+      3. Create admin account
+      4. Adopt your UniFi devices
+
+      Important Notes:
+      - First boot may take several minutes
+      - UFW application profile "UniFi" allows all required device communication ports
+      - Firewall rules restrict access to local networks only
+      - Consider setting up external access for remote management
+  tags: [install, verify, healthcheck]
+
+## UniFi Network Server Configuration Tasks
+# -----------------------------------------------------------------------------
+
+- name: Deploy UniFi UFW application profile
+  ansible.builtin.template:
+    src: templates/unifi-ufw-profile.j2
+    dest: /etc/ufw/applications.d/unifi
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config]
+
+- name: Allow UniFi application from local networks
+  community.general.ufw:
+    rule: allow
+    name: UniFi
+    from_ip: "{{ item }}"
+  become: true
+  loop: "{{ unifi_os_allowed_networks | default(['192.168.1.0/24']) }}"
+  tags: [install, config, firewall]
+
+- name: Reload UFW to apply UniFi Network Server application profile
+  community.general.ufw:
+    state: reloaded
+  become: true
+  tags: [install, config, firewall]
+
+## UniFi Network Server Health Checks
+# -----------------------------------------------------------------------------
+
+- name: Check UniFi Network Server web interface availability
+  ansible.builtin.uri:
+    url: "https://127.0.0.1"
+    validate_certs: false
+    timeout: 30
+  register: unifi_web_check
+  failed_when: false
+  tags: [install, verify, healthcheck]
+
+- name: Report UniFi Network Server web interface status
+  ansible.builtin.debug:
+    msg: |
+      UniFi Network Server Web Interface Status:
+      - URL: https://{{ ansible_default_ipv4.address }}
+      - HTTP Status: {{ unifi_web_check.status | default('Not available') }}
+      - Response Time: {{ unifi_web_check.elapsed | default('N/A') }} seconds
+  tags: [install, verify, healthcheck]
+
+- name: Check system resources used by UniFi Network Server
+  ansible.builtin.shell: ps aux | grep unifi | grep -v grep | head -5
+  register: unifi_processes
+  changed_when: false
+  failed_when: false
+  tags: [install, verify, healthcheck]
+
+- name: Display UniFi Network Server processes
+  ansible.builtin.debug:
+    msg: |
+      UniFi Network Server Processes:
+      {{ unifi_processes.stdout | default('No UniFi processes found') }}
+  tags: [install, verify, healthcheck]

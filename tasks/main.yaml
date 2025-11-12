@@ -68,6 +68,12 @@
       tags:
         - nginx
 
+    - name: Install UniFi OS
+      ansible.builtin.include_tasks: unifi-os-debian.yaml
+      when: ansible_os_family == "Debian"
+      tags:
+        - unifi-os
+
     - name: Install and Configure Homepage
       ansible.builtin.include_tasks: homepage-debian.yaml
       tags:
@@ -109,6 +115,11 @@
       ansible.builtin.include_tasks: nfs-mounts-debian.yaml
       tags:
         - nfs
+    
+    - name: Install and Configure Unifi Server OS
+      ansible.builtin.include_tasks: unifi-os-debian.yaml
+      tags:
+        - unifi-os
 
 
 ## RedHat family tasks block

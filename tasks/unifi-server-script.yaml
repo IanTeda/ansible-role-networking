@@ -1,0 +1,81 @@
+# ==============================================================================
+# NETWORKING ROLE - UNIFI NETWORK SERVER INSTALLATION TASKS (Script)
+# ==============================================================================
+#
+# File: roles/networking/tasks/unifi-server-script.yaml
+# Purpose: Configure system post script install
+#
+# UniFi Network Server provides:
+#   - UniFi Network Controller
+#   - UniFi Protect (camera management)
+#   - UniFi Access (door access control)
+#   - UniFi Talk (VoIP)
+#
+# UFW Application Profile: UniFi
+#   - Defines all required ports for device communication
+#   - Allows access from local networks only
+#   - Use: ufw allow "UniFi" from <local_network>
+#
+# Required Ports for UniFi Device Communication:
+#   TCP 8080  - Device communication (HTTP)
+#   TCP 8443  - Device communication (HTTPS)
+#   TCP 8880  - Device communication (HTTP alternative)
+#   TCP 8843  - Device communication (HTTPS alternative)
+#   TCP 6789  - UniFi mobile app communication
+#   UDP 3478  - STUN (device discovery and NAT traversal)
+#   UDP 10001 - Device discovery
+#   TCP 443   - Web interface (HTTPS)
+#   TCP 80    - Web interface (HTTP, for initial setup)
+#
+# Requirements:
+#   - Assumes script install 
+#
+# Post-Installation:
+#   - Access UniFi at https://<server-ip>:8443
+#   - Complete initial setup wizard
+#   - Adopt UniFi devices through the controller
+#
+# Notes:
+#   - Include port 10001 for layer 2 adoption
+#   - https://glennr.nl/s/unifi-network-controller
+#
+# ==============================================================================
+
+---
+
+- name: Set Unifi facts for the role
+  ansible.builtin.set_fact:
+    unifi_allowed_networks: "{{ networking_networks.local | default('192.168.1.0/24') }}"
+  tags: [always]
+
+- name: Deploy Unifi UFW application profile
+  ansible.builtin.template:
+    src: unifi-ufw-profile.j2
+    dest: /etc/ufw/applications.d/unifi-network-server
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [config, firewall]
+
+- name: Reload UFW to recognize new application profile
+  community.general.ufw:
+    state: reloaded
+  become: true
+  tags: [install, config]
+
+- name: Allow Unifi local network services from allowed networks
+  ansible.builtin.ufw:
+    rule: allow
+    name: "UniFi Network Server"
+    comment: "UniFi Network Server (8443/tcp|8880/tcp|8843/tcp|6789/tcp|3478/udp|10001/udp) from LOCAL NET"
+    src: "{{ item }}"
+  loop: "{{ unifi_allowed_networks }}"
+  become: true
+  tags: [config, firewall]
+
+- name: Reload UFW to recognize new application profile
+  community.general.ufw:
+    state: reloaded
+  become: true
+  tags: [config, firewall]
