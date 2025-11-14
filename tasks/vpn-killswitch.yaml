@@ -1,0 +1,318 @@
+# ==============================================================================
+# VPN KILL SWITCH TASKS
+# ==============================================================================
+#
+# This file implements a VPN kill switch for WireGuard VPN connections using UFW
+# (Uncomplicated Firewall). The kill switch ensures that all network traffic is
+# blocked when the VPN connection is not active, preventing accidental data leaks.
+#
+# FEATURES:
+# - Automatic UFW rule deployment for VPN-only traffic
+# - Primary network interface detection
+# - Comprehensive health checks and connectivity testing
+# - Backup and restore of original UFW configuration
+# - Configurable local network and DHCP access
+#
+# SECURITY CONSIDERATIONS:
+# - All non-VPN traffic is blocked when VPN is down
+# - Local network access can be configured for LAN connectivity
+# - DHCP traffic is allowed for IP address renewal
+# - Testing mode available to verify kill switch functionality
+#
+# DEPENDENCIES:
+# - WireGuard VPN service (wg-quick)
+# - UFW firewall
+# - networking role variables (networking_vpn_killswitch.*)
+#
+# USAGE:
+# - Include this file in the main networking tasks
+# - Configure variables in networking/defaults/main.yaml
+# - Run with tags: install, config, verify, healthcheck, killswitch-test
+# - Manually confirm external ip address: `curl https://api.ipify.org` & `ip route get 8.8.8.8`
+#
+# ==============================================================================
+
+---
+
+- name: Display Kill Switch variables for debugging
+  ansible.builtin.debug:
+    var: networking_vpn_killswitch
+  tags: [debug]
+
+- name: Set Kill Switch role facts
+  ansible.builtin.set_fact:
+    killswitch_server_ip: "{{ networking_vpn_killswitch.vpn_server_ip }}"
+    killswitch_dns_servers: "{{ networking_vpn_killswitch.dns_servers.split(',') | select | list if networking_vpn_killswitch.dns_servers else [] }}"
+    killswitch_vpn_interface: "{{ networking_vpn_killswitch.vpn_interface }}"
+    killswitch_default_interface: "{{ networking_vpn_killswitch.default_interface }}"
+    killswitch_vpn_service: "{{ networking_vpn_killswitch.vpn_service }}"
+  tags: [always]
+
+- name: Debug kill switch facts
+  ansible.builtin.debug:
+    msg: |
+      Kill switch facts set:
+       - VPN Server IP: {{ killswitch_server_ip }}
+       - DNS Servers: {{ killswitch_dns_servers }}
+       - VPN Interface: {{ killswitch_vpn_interface }}
+       - Default Interface: {{ killswitch_default_interface }}
+       - VPN Service: {{ killswitch_vpn_service }}
+  tags: [debug]
+
+- name: Backup original UFW before.rules if not already backed up
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules
+    dest: /etc/ufw/before.rules.orig
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+  become: true
+  tags: [install, kill-switch]
+
+- name: Deploy UFW kill switch rules file
+  ansible.builtin.template:
+    src: templates/vpn-killswitch-before.rules.j2
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, kill-switch]
+
+- name: Restore original UFW before.rules from backup
+  ansible.builtin.copy:
+    src: /etc/ufw/before.rules.orig
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0644'
+    remote_src: true
+    force: true
+  become: true
+  tags: [never, uninstall, restore]
+
+- name: Reload UFW to apply new rules
+  community.general.ufw:
+    state: reloaded
+  become: true
+  changed_when: false
+  tags: [install, config, restore]
+
+- name: Ensure UFW is enabled
+  community.general.ufw:
+    state: enabled
+  become: true
+  changed_when: false
+  tags: [install, config, restore]
+
+- name: Ensure VPN service is restarted
+  ansible.builtin.systemd:
+    name: "{{ killswitch_vpn_service }}"
+    state: restarted
+  tags: [install, config, restore]
+
+
+# ==============================================================================
+## HEALTH CHECKS
+# Confirm wireguard vpn is operational
+# 
+# 0. Get the external ip address of the ansible control node/host
+# 1. Ensure vpn interface is up
+# 1. Verify VPN interface is up and operational
+# 2. Test ip route `ip route get 8.8.8.8` to confirm traffic routes via VPN interface privadovpn
+# 3. Test external connectivity with VPN up (should succeed)
+# 4. Get the external vpn ip address
+# 5. Check the external vpn ip address is different to the control node external ip address
+#
+# 6. Stop the vpn interface
+# 7. Verify VPN interface is down
+# 8. Confirm the route `ip route get 8.8.8.8` shows enp2s0
+# 9. Test external connectivity with VPN down (should fail)
+# 10. Check the logs for 'KILL SWITH DROP' entries
+#
+# 11. Restart the vpn interface
+# 12. Verify VPN interface is up and operational
+# 13. Test ip route `ip route get 8.8.8.8` to confirm traffic routes via VPN interface privadovpn
+# ------------------------------------------------------------------------------
+
+- name: Verify VPN connectivity ahead of the killswitch test
+  become: true
+  tags: [verify, healthcheck]
+  block:
+    - name: Verify VPN interface is up and operational
+      ansible.builtin.shell: |
+        # Check if VPN interface exists and has an IP address
+        if ip link show {{ killswitch_vpn_interface }} | grep -q "UP"; then
+          echo "VPN interface {{ killswitch_vpn_interface }} is UP"
+          exit 0
+        else
+          echo "VPN interface {{ killswitch_vpn_interface }} is DOWN or does not exist"
+          exit 1
+        fi
+      register: vpn_interface_check
+      changed_when: false
+      failed_when: vpn_interface_check.rc != 0
+
+    - name: Display VPN interface status
+      ansible.builtin.debug:
+        msg: "{{ vpn_interface_check.stdout }}"
+
+    - name: Test IP route for 8.8.8.8 to confirm routing via VPN interface
+      ansible.builtin.shell: ip route get 8.8.8.8
+      register: route_test
+      changed_when: false
+      failed_when: route_test.stdout is not search('dev ' + killswitch_vpn_interface)
+
+    - name: Display IP route test result
+      ansible.builtin.debug:
+        msg: "IP route for 8.8.8.8: {{ route_test.stdout }}"
+
+    - name: Get external VPN IP address
+      ansible.builtin.uri:
+        url: https://api.ipify.org
+        return_content: true
+      register: vpn_external_ip
+
+    - name: Display external VPN IP address
+      ansible.builtin.debug:
+        msg: "External VPN IP address: {{ vpn_external_ip.content }}"
+
+    # TODO: The isp external ip address not working, a problem for later
+    # - name: Get external IP address of Ansible control host
+    #   ansible.builtin.uri:
+    #     url: https://api.ipify.org
+    #     return_content: true
+    #   delegate_to: local
+    #   register: control_external_ip
+    #   tags: [verify, healthcheck]
+
+    # - name: Display control host external IP
+    #   ansible.builtin.debug:
+    #     msg: "Ansible control host external IP: {{ control_external_ip.content }}"
+    #   tags: [debug]
+
+
+- name: Test VPN killswitch functionality
+  become: true
+  tags: [verify, healthcheck]
+  block:
+    - name: Stop vpn service to test kill switch
+      ansible.builtin.systemd:
+        name: "{{ killswitch_vpn_service }}"
+        state: stopped
+
+    - name: Pause for 5 seconds to ensure service is fully down
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Verify VPN interface is down before testing kill switch
+      ansible.builtin.shell: |
+        # Check if VPN interface is down or removed (both indicate VPN is off)
+        if ip link show {{ killswitch_vpn_interface }} 2>/dev/null | grep -q "DOWN" || ! ip link show {{ killswitch_vpn_interface }} 2>/dev/null; then
+          echo "VPN interface {{ killswitch_vpn_interface }} is DOWN or removed as expected"
+          exit 0
+        else
+          echo "VPN interface {{ killswitch_vpn_interface }} is still UP - service may not have stopped properly"
+          exit 1
+        fi
+      register: vpn_down_check
+      changed_when: false
+      failed_when: vpn_down_check.rc != 0
+
+    - name: Display VPN interface down status
+      ansible.builtin.debug:
+        msg: "{{ vpn_down_check.stdout }}"
+
+    - name: Confirm IP route goes through default interface with VPN down
+      ansible.builtin.shell: ip route get 8.8.8.8
+      register: route_down_test
+      changed_when: false
+      failed_when: route_down_test.stdout is not search('dev ' + killswitch_default_interface)
+
+    - name: Display IP route with VPN down
+      ansible.builtin.debug:
+        msg: "IP route for 8.8.8.8 with VPN down: {{ route_down_test.stdout }}"
+
+    - name: Test external connectivity with VPN down (should fail)
+      ansible.builtin.uri:
+        url: https://api.ipify.org
+        timeout: 5
+      register: killswitch_test_result
+      ignore_errors: true
+
+    - name: Assert kill switch is working (traffic should be blocked)
+      ansible.builtin.assert:
+        that:
+          - killswitch_test_result.failed
+        fail_msg: "Kill switch is NOT working! Traffic was not blocked when VPN was down."
+        success_msg: "Kill switch is working correctly - traffic was blocked when VPN was down."
+
+    - name: Confirm VPN server IP is reachable with VPN down
+      ansible.builtin.shell: ping -c 1 {{ killswitch_server_ip }}
+      register: ping_server
+      changed_when: false
+      failed_when: ping_server.rc != 0
+
+    - name: Display VPN server reachability test
+      ansible.builtin.debug:
+        msg: "VPN server {{ killswitch_server_ip }} is reachable: {{ 'yes' if ping_server.rc == 0 else 'no' }}"
+
+  always:
+    - name: Restart VPN service after kill switch test
+      ansible.builtin.systemd:
+        name: "{{ killswitch_vpn_service }}"
+        state: restarted
+        enabled: true
+
+- name: Verify VPN interface is up and operational after test
+  ansible.builtin.shell: |
+    # Check if VPN interface exists and has an IP address
+    if ip link show {{ killswitch_vpn_interface }} | grep -q "UP"; then
+      echo "VPN interface {{ killswitch_vpn_interface }} is UP"
+      exit 0
+    else
+      echo "VPN interface {{ killswitch_vpn_interface }} is DOWN or does not exist"
+      exit 1
+    fi
+  register: vpn_interface_check
+  changed_when: false
+  failed_when: vpn_interface_check.rc != 0
+  tags: [verify, healthcheck]
+
+- name: Display VPN interface status
+  ansible.builtin.debug:
+    msg: "{{ vpn_interface_check.stdout }}"
+
+- name: Summary of VPN Kill Switch role execution
+  ansible.builtin.debug:
+    msg: |
+      ==============================================================================
+      VPN KILL SWITCH ROLE SUMMARY
+      ==============================================================================
+      
+      Configuration:
+      - Enabled: {{ networking_vpn_killswitch.enabled | default(false) }}
+      - VPN Interface: {{ killswitch_vpn_interface | default('Not set') }}
+      - VPN Server IP: {{ killswitch_server_ip | default('Not set') }}
+      - DNS Servers: {{ killswitch_dns_servers | default([]) }}
+      - Default Interface: {{ killswitch_default_interface | default('Not set') }}
+      - VPN Service: {{ killswitch_vpn_service | default('Not set') }}
+      
+      Actions Performed:
+      - UFW rules deployed: Yes (if kill-switch tag used)
+      - UFW reloaded: Yes (if config tag used)
+      - VPN service restarted: Yes (if install/config tag used)
+      
+      Health Check Results:
+      - VPN Interface Status: {{ vpn_interface_check.stdout | default('Not checked') }}
+      - Kill Switch Test: {{ 'Passed' if killswitch_test_result.failed else 'Failed' }} (if tested)
+      
+      Next Steps:
+      - Monitor UFW logs: sudo tail -f /var/log/ufw.log
+      - Verify external IP: curl https://api.ipify.org
+      - Run with tags: ansible-playbook playbook.yml --tags kill-switch,verify
+      
+      ==============================================================================
+  tags: [always]

@@ -221,22 +221,46 @@ networking_unifi:
 
 ## WireGuard VPN Configuration
 networking_wireguard_vpn:
-  interface_name: 'privadovpn'
+  interface_name: 'vpn_service_provider'
   private_key: "{{ vault_wireguard_private_key }}"
   public_key: "{{ vault_wireguard_public_key }}"
   address: "{{ vault_wireguard_address }}"
-  dns: "{{ vault_wireguard_dns }}"
+  dns_servers: "{{ vault_wireguard_dns }}"
   endpoint: "{{ vault_wireguard_endpoint }}"
   allowed_ips: "{{ vault_wireguard_allowed_ips }}"
   auto_start: true
 
 
 ## VPN Kill Switch Configuration
-networking_vpn_kill_switch:
-  enabled: true
-  vpn_service: "wg-quick@privadovpn"
+# Implements UFW firewall rules to block all non-VPN traffic
+# This prevents data leaks when the VPN connection drops
+networking_vpn_killswitch:
+  # VPN server IP address
+  # This allows the initial connection to the VPN server
+  # WireGuard: Extracted from "Endpoint" line in /etc/wireguard/*.conf
+  # OpenVPN: Extract from "remote" line in config
+  vpn_server_ip: "{{ networking_wireguard_vpn.endpoint_server }}"
+
+  # Useful for resolving VPN server hostname before connecting
+  # WireGuard: Extracted from "DNS" line in /etc/wireguard/*.conf
+  # OpenVPN: Not auto-detected yet, specify manually if needed
+  dns_servers: "{{ networking_wireguard_vpn.dns_servers }}"
+
+  # VPN tunnel interface
+  # WireGuard: Usually matches interface_name from networking_wireguard_vpn
+  # OpenVPN: Usually "tun0" or "tun1"
+  # Find with: ip link show | grep -E 'tun|wg' or wg show
   vpn_interface: "{{ networking_wireguard_vpn.interface_name }}"
-  allow_local_networks: true
-  allow_dhcp: true
-  log_dropped_packets: false
-  test_enabled: false
+
+  # Default Interface
+  # This is the physical network interface connected to the internet
+  # This can be found using `ip route | grep default`
+  default_interface: "xxxxx"
+  
+  # VPN systemd service name
+  # WireGuard: "wg-quick@<interface_name>"
+  # OpenVPN: "openvpn@<config_name>" or "openvpn-client@<config_name>"
+  vpn_service: "xxxxx"
+  
+
+

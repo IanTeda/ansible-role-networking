@@ -53,10 +53,10 @@
         - healthcheck
 
     - name: Configure VPN Kill Switch
-      ansible.builtin.include_tasks: vpn-killswitch-yaml
-      when: networking_vpn_kill_switch.enabled | default(false)
+      ansible.builtin.include_tasks: vpn-killswitch.yaml
+      # when: networking_vpn_kill_switch.enabled | default(false)
       tags:
-        - vpn-kill-switch
+        - vpn-killswitch
 
     - name: Install Certbot and Retrieve TLS Certificates
       ansible.builtin.include_tasks: lets-encrypt-debian.yaml
