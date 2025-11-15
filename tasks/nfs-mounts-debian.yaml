@@ -30,6 +30,7 @@
     nfs_mounts: "{{ networking_nfs.mounts }}"
     nfs_user: "{{ networking_nfs.user | default('root') }}"
     nfs_group: "{{ networking_nfs.group | default('root') }}"
+    nfs_method: "{{ networking_nfs.method | default('fstab') }}"
   tags: [always]
 
 # - name: Display NFS facts for debugging
@@ -128,48 +129,176 @@
   tags: [install, config]
 
 
-## 03. CONFIGURE FSTAB ENTRIES
-# -----------------------------------------------------------------------------
-- name: Add NFS mounts to /etc/fstab
-  ansible.builtin.mount:
-    path: "{{ item.mount_path }}"
-    src: "{{ item.server }}:{{ item.share_path }}"
-    fstype: nfs
-    opts: "{{ nfs_default_options }}"
-    state: present
-    boot: yes
-  loop: "{{ nfs_mounts }}"
-  become: true
+- name: Configure and mount fstab entries
   tags: [install, config]
+  when: nfs_method == "fstab"
+  block:
 
-- name: Reload systemd daemon after fstab changes
-  ansible.builtin.systemd:
-    daemon_reload: yes
-  become: true
+    ## CONFIGURE FSTAB ENTRIES
+    # -----------------------------------------------------------------------------
+    - name: Add NFS mounts to /etc/fstab
+      ansible.builtin.mount:
+        path: "{{ item.mount_path }}"
+        src: "{{ item.server }}:{{ item.share_path }}"
+        fstype: nfs
+        opts: "{{ nfs_default_options }}"
+        state: present
+        boot: yes
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [install, config]
+
+    - name: Reload systemd daemon after fstab changes
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      become: true
+      tags: [install, config]
+
+    ## MOUNT NFS SHARES
+    # -----------------------------------------------------------------------------
+    - name: Mount NFS shares
+      ansible.builtin.command:
+        cmd: "mount {{ item.mount_path }}"
+      loop: "{{ nfs_mounts }}"
+      register: mount_results
+      changed_when: mount_results.rc == 0
+      failed_when: mount_results.rc != 0
+      become: true
+      tags: [install, config]
+
+    - name: Verify NFS mounts are active
+      ansible.builtin.shell:
+        cmd: "mount | grep '{{ item.mount_path }}'"
+      loop: "{{ nfs_mounts }}"
+      register: mount_verify
+      changed_when: false
+      failed_when: mount_verify.rc != 0
+      become: true
+      tags: [install, config, verify]
+
+
+- name: Uninstall mount fstab entries
+  tags: [never, uninstall]
+  when: nfs_method == "fstab"
+  block:
+
+    ## UNINSTALLATION FSTAB TASKS
+    # -----------------------------------------------------------------------------
+    - name: Unmount NFS shares before removal
+      ansible.builtin.command:
+        cmd: "umount {{ item.mount_path }}"
+      loop: "{{ nfs_mounts }}"
+      register: umount_results
+      changed_when: umount_results.rc == 0
+      failed_when: false  # Don't fail if already unmounted
+      become: true
+      when: (nfs_removal_confirmation.user_input | bool) and (nfs_method == "fstab")
+      tags: [never, uninstall]
+
+    - name: Remove NFS mount entries from /etc/fstab
+      ansible.builtin.mount:
+        path: "{{ item.mount_path }}"
+        src: "{{ item.server }}:{{ item.share_path }}"
+        fstype: nfs
+        state: absent
+      loop: "{{ nfs_mounts }}"
+      become: true
+      when: (nfs_removal_confirmation.user_input | bool) and (nfs_method == "fstab")
+      tags: [never, uninstall]
+
+    - name: Stop and disable rpcbind service
+      ansible.builtin.systemd:
+        name: rpcbind
+        state: stopped
+        enabled: false
+      become: true
+      when: nfs_removal_confirmation.user_input | bool
+      tags: [never, uninstall]
+
+
+## DEPLOY SYSTEMD MOUNT FILES
+# -------------------------------------------------------------------------
+- name: Configure and mount systemd mount
   tags: [install, config]
+  when: nfs_method == "systemd"
+  block:
+
+    - name: Create systemd mount unit files for NFS shares
+      ansible.builtin.template:
+        src: nfs-systemd.mount.j2
+        dest: "/etc/systemd/system/{{ item.mount_path[1:] | replace('/', '-') }}.mount"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [install, config]
+
+    - name: Reload systemd daemon after mount unit changes
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      become: true
+      tags: [install, config]
+
+    - name: Enable and start systemd mount units
+      ansible.builtin.systemd:
+        name: "{{ item.mount_path[1:] | replace('/', '-') }}.mount"
+        state: started
+        enabled: true
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [install, config]
+
+    - name: Confirm NFS systemd mount units are active
+      ansible.builtin.systemd:
+        name: "{{ item.mount_path[1:] | replace('/', '-') }}.mount"
+        state: started
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [install, config, verify]
+
+    - name: Verify NFS systemd mounts are mounted
+      ansible.builtin.shell:
+        cmd: "mount | grep '{{ item.mount_path }}'"
+      loop: "{{ nfs_mounts }}"
+      register: systemd_mount_verify
+      changed_when: false
+      failed_when: systemd_mount_verify.rc != 0
+      become: true
+      tags: [install, config, verify]
 
 
-## 04. MOUNT NFS SHARES
-# -----------------------------------------------------------------------------
-- name: Mount NFS shares
-  ansible.builtin.command:
-    cmd: "mount {{ item.mount_path }}"
-  loop: "{{ nfs_mounts }}"
-  register: mount_results
-  changed_when: mount_results.rc == 0
-  failed_when: mount_results.rc != 0
-  become: true
-  tags: [install, config]
 
-- name: Verify NFS mounts are active
-  ansible.builtin.shell:
-    cmd: "mount | grep '{{ item.mount_path }}'"
-  loop: "{{ nfs_mounts }}"
-  register: mount_verify
-  changed_when: false
-  failed_when: mount_verify.rc != 0
-  become: true
-  tags: [install, config, verify]
+- name: Uninstall systemd mounts
+  tags: [never, uninstall]
+  when: nfs_method == "systemd"
+  block:
+
+    ## UNINSTALL SYSTEMD MOUNTS
+    # -------------------------------------------------------------------------
+    - name: Stop and disable systemd mount units
+      ansible.builtin.systemd:
+        name: "{{ item.name }}.mount"
+        state: stopped
+        enabled: false
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [never, uninstall]
+
+    - name: Remove systemd mount unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item.name }}.mount"
+        state: absent
+      loop: "{{ nfs_mounts }}"
+      become: true
+      tags: [never, uninstall]
+
+    - name: Reload systemd daemon after mount unit removal
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      become: true
+      tags: [never, uninstall]
+
 
 
 ## 05. SET MOUNT PERMISSIONS

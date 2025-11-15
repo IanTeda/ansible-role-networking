@@ -80,16 +80,40 @@ networking_glance:
 
 ## Homepage Configuration
 networking_homepage:
+  # Installation method: 'debian' or 'docker'
+  install_method: "docker"                        # Recommended: docker
+
+  # Service configuration
   user: 'homepage'
   group: 'homepage'
   release: 'v1.4.0' # <-- https://github.com/gethomepage/homepage/releases
   port: '3000'
   hostname: '{{ ansible_hostname }}'
   title: '{{ ansible_hostname }} - Homepage'
-  description: 'A server for doing xyz'
+  description: 'A modern, fully static, fast, secure, fully proxied, highly customizable application dashboard'
   theme: 'dracula' # Options: light, dark, dracula, etc.
   allowed_hosts: '{{ ansible_hostname }}, {{ ansible_hostname }}:3000, {{ ansible_fqdn }}, {{ ansible_fqdn }}:3000' # <-- When pasting into host_vars, update to include vault_hostname_address
-  data_dir: '/var/www'
+
+  # Directory configuration
+  install_dir: "/opt/homepage"                    # Installation directory for Docker compose
+  data_dir: '/var/lib/homepage'                   # Data directory for persistent storage
+  config_dir: '/etc/homepage'                     # Configuration directory
+
+  # Docker configuration (when install_method: docker)
+  docker_image: "ghcr.io/gethomepage/homepage:latest"
+  container_name: "homepage"
+  timezone: "America/New_York"
+
+  # Network settings
+  allowed_networks: ["192.168.1.0/24"]            # Networks allowed to access Homepage
+
+  # Nginx settings
+  nginx_enabled: true                             # Enable nginx reverse proxy
+  nginx_location_url: "/"                         # URL for accessing Homepage via nginx (root)
+
+  # Advanced settings
+  debug_logging: false
+
 
 ## I2P Daemon Configuration
 # https://i2pd.readthedocs.io/en/latest/configuration.html
@@ -129,6 +153,9 @@ networking_networks:
 
 ## NFS (Network File System) Configuration
 networking_nfs:
+  # Chose how to mount nfs shares. `fstab` or `systemd`
+  method: "fstab"
+
   # The user to use when creating nfs mount points
   user: 'root'
   # Check user id on NAS
@@ -180,7 +207,7 @@ networking_openvpn_client:
   group: 'root'
   config_download: "{{ vault_vpn_config_download }}"   # URL to download OpenVPN config zip
   vpn_server: '{{ vault_vpn_server }}'
-  dns_servers: "209.222.18.218 209.222.18.222 1.1.1.1 9.9.9.9"           # List of DNS servers to use when VPN is active
+  dns_servers: "209.222.18.218 209.222.18.218 1.1.1.1 9.9.9.9"           # List of DNS servers to use when VPN is active
 
 
 ## Samba Configuration
