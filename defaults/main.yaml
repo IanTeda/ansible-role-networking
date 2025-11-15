@@ -263,4 +263,45 @@ networking_vpn_killswitch:
   vpn_service: "xxxxx"
   
 
+## --- HOMARR
+# https://github.com/homarr-labs/homarr
+networking_homarr:
+  # Installation method: 'docker' or 'debian'
+  install_method: "docker"                        # Installation method
+
+  # Direct installation configuration (when install_method: debian)
+  user: "homarr"
+  group: "homarr"
+  additional_groups:                           # Additional groups for the user
+    - "nas"
+
+  # Release version to deploy
+  release: "1.43.2"                               # https://github.com/homarr-labs/homarr/releases or 'latest'
+
+  # Service configuration
+  web_port: 7575                                  # Homarr web UI port
+
+  # Directory configuration
+  install_dir: "/opt/homarr"                      # Installation directory
+  data_dir: "/var/lib/homarr"                     # Data directory
+  config_dir: "/etc/homarr"                       # Configuration directory
+
+  auth_secret: "super-secret-auth"                # Optional authentication secret for Homarr
+
+  # Network configuration
+  allowed_networks:                               # Networks allowed to access Homarr
+    - "192.168.1.0/24"
+  nginx_enabled: true                             # Enable nginx reverse proxy
+  nginx_path: "homarr"                            # URL path for nginx proxy (e.g., /homarr)
+
+  # Docker configuration (when install_method: docker)
+  docker_image: "ghcr.io/ajnart/homarr:latest"
+  container_name: "homarr"
+  timezone: "America/New_York"
+
+  # Nginx location block settings
+  nginx_location_url: "https://{{ networking_nginx.hostname }}/overseerr/"  # URL for accessing Overseerr via nginx
+
+  # Advanced settings
+  debug_logging: false
 

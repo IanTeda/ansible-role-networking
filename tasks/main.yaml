@@ -121,6 +121,18 @@
       tags:
         - unifi-os
 
+    - name: Install and Configure Homarr (Debian)
+      ansible.builtin.include_tasks: homarr-debian.yaml
+      when: networking_homarr.install_method | default('debian') == 'debian'
+      tags:
+        - homarr
+
+    - name: Install and Configure Homarr (Docker)
+      ansible.builtin.include_tasks: homarr-docker.yaml
+      when: networking_homarr.install_method | default('debian') == 'docker'
+      tags:
+        - homarr
+
 
 ## RedHat family tasks block
 # ------------------------------------------------------------------------------
