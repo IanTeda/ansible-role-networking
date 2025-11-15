@@ -74,11 +74,6 @@
       tags:
         - unifi-os
 
-    - name: Install and Configure Homepage
-      ansible.builtin.include_tasks: homepage-debian.yaml
-      tags:
-        - homepage
-
     - name: Install and Configure Glance (Debian)
       ansible.builtin.include_tasks: glance-debian.yaml
       when: networking_glance.install_method == "debian"
@@ -127,11 +122,23 @@
       tags:
         - homarr
 
-    - name: Install and Configure Homarr (Docker)
+    - name: Install and Configure Homarr (Debian)
       ansible.builtin.include_tasks: homarr-docker.yaml
       when: networking_homarr.install_method | default('debian') == 'docker'
       tags:
         - homarr
+
+    - name: Install and Configure Homepage (Debian)
+      ansible.builtin.include_tasks: homepage-debian.yaml
+      when: networking_homepage.install_method | default('debian') == 'debian'
+      tags:
+        - homepage
+
+    - name: Install and Configure Homepage (Docker)
+      ansible.builtin.include_tasks: homepage-docker.yaml
+      when: networking_homepage.install_method | default('debian') == 'docker'
+      tags:
+        - homepage
 
 
 ## RedHat family tasks block

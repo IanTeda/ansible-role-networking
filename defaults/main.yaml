@@ -110,6 +110,7 @@ networking_homepage:
   # Nginx settings
   nginx_enabled: true                             # Enable nginx reverse proxy
   nginx_location_url: "/"                         # URL for accessing Homepage via nginx (root)
+  nginx_path: "/homepage"                         # Nginx location path (e.g., "/" for root, "/homepage" for subpath)
 
   # Advanced settings
   debug_logging: false

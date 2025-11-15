@@ -84,3 +84,15 @@
   community.general.ufw:
     state: reloaded
   become: true
+
+- name: Reload Nginx
+  community.general.ufw:
+    state: reloaded
+  become: true
+
+- name: Restart Homepage Docker
+  community.docker.docker_compose:
+    project_src: "{{ homepage_install_dir }}"
+    state: present
+    restarted: true
+  become: true

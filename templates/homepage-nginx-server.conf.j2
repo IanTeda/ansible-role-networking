@@ -1,0 +1,65 @@
+# Bitcoin Server NGINX Configuration
+# ==================================
+#
+# Default HTTPS server configuration for Bitcoin node with modular includes
+# This serves as the base configuration for additional Bitcoin-related services
+#
+# Template Variables:
+#   - nginx_server_name: Primary domain name (e.g., "computer.example.com")
+#
+# Usage:
+#   Add service-specific configurations in {{ nginx_sites_location }}/{{ nginx_server_name }}-*.conf
+#   which will be automatically included via the include directive below
+
+server {
+    listen 443 ssl;
+    server_name {{ nginx_server_name }} localhost;
+    
+    # SSL Settings
+    ssl_certificate {{ nginx_tls_dir }}/{{ nginx_server_name }}.crt;
+    ssl_certificate_key {{ nginx_tls_dir }}/{{ nginx_server_name }}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Security Headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+    
+    {# # Default root and index
+    root /var/www/{{ nginx_server_name }}-server;
+    index index.html index.htm; #}
+    
+    # Root location - Proxy to Homepage
+    location / {
+        proxy_pass http://127.0.0.1:{{ homepage_port | default('3000') }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    
+    # Health check endpoint
+    location /healthcheck {
+        access_log off;
+        return 200 "OK\n";
+        add_header Content-Type text/plain;
+    }
+
+    # Include additional server locations (i.e. url paths /<location>) configurations
+    # Place service-specific configs in {{ nginx_sites_location }}/{{ nginx_server_name }}-*.conf
+    include {{ nginx_sites_location }}/{{ nginx_server_name }}-*.conf;
+
+    # Deny access to hidden files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+}
