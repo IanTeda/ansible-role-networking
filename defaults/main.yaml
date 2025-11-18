@@ -238,11 +238,6 @@ networking_ssh:
   user_access_list: "{{ vault_ssh_user_access_list }}"  # List of users with SSH access
 
 
-## UFW Configuration
-networking_ufw:
-  user: 'root'
-  group: 'root'
-
 networking_unifi:
   host: 'unifi.homenetwork.com'
   path: 'unifi'

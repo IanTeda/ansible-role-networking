@@ -52,7 +52,8 @@
     homepage_title: "{{ networking_homepage.title | default(ansible_hostname + ' - Homepage') }}"
     homepage_description: "{{ networking_homepage.description | default('A modern, fully static, fast, secure, fully proxied, highly customizable application dashboard') }}"
     homepage_theme: "{{ networking_homepage.theme | default('dracula') }}"
-    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts | default(ansible_hostname + ', ' + ansible_hostname + ':' + networking_homepage.port | default('3000') + ', ' + ansible_fqdn + ', ' + ansible_fqdn + ':' + networking_homepage.port | default('3000')) }}"
+    homepage_firewall_enabled: "{{ networking_homepage.firewall_enabled | default(false) }}"
+    homepage_firewall_allowed_hosts: "{{ networking_homepage.allowed_hosts | default(ansible_hostname + ', ' + ansible_hostname + ':' + networking_homepage.port | default('3000') + ', ' + ansible_fqdn + ', ' + ansible_fqdn + ':' + networking_homepage.port | default('3000')) }}"
     homepage_log_level: "{{ networking_homepage.log_level | default('info') }}"
     homepage_nginx_path: "{{ networking_homepage.nginx_path | default('/') }}"
     nginx_sites_available: "{{ networking_nginx.sites_available_dir }}"
@@ -92,7 +93,7 @@
       - Title: {{ homepage_title }}
       - Description: {{ homepage_description }}
       - Theme: {{ homepage_theme }}
-      - Allowed Hosts: {{ homepage_allowed_hosts }}
+      - Allowed Hosts: {{ homepage_firewall_allowed_hosts }}
       - Log Level: {{ homepage_log_level }}
   tags: [debug]
 

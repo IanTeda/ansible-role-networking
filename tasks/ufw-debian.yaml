@@ -24,8 +24,6 @@
 
 - name: Set UFW role facts
   ansible.builtin.set_fact:
-    ufw_user: "{{ networking_ufw.user }}"
-    ufw_group: "{{ networking_ufw.group }}"
     ufw_config_dir: "/etc/ufw"
     ufw_config_file: "/etc/ufw/ufw.conf"
     ufw_before_rules_file: "/etc/ufw/before.rules"
@@ -42,8 +40,6 @@
 - name: Display UFW facts for debugging
   ansible.builtin.debug:
     msg:
-      - "Fact -> ufw_user: {{ ufw_user }}"
-      - "Fact -> ufw_group: {{ ufw_group }}"
       - "Fact -> ufw_config_dir: {{ ufw_config_dir }}"
       - "Fact -> ufw_config_file: {{ ufw_config_file }}"
       - "Fact -> ufw_before_rules_file: {{ ufw_before_rules_file }}"
