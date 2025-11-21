@@ -46,8 +46,8 @@
     wireguard_private_key: "{{ networking_wireguard_vpn.private_key }}"
     wireguard_public_key: "{{ networking_wireguard_vpn.public_key }}"
     wireguard_address: "{{ networking_wireguard_vpn.address }}"
-    wireguard_dns: "{{ networking_wireguard_vpn.dns }}"
-    wireguard_endpoint: "{{ networking_wireguard_vpn.endpoint }}"
+    wireguard_dns: "{{ networking_wireguard_vpn.dns_servers }}"
+    wireguard_endpoint: "{{ networking_wireguard_vpn.endpoint_server }}"
     wireguard_allowed_ips: "{{ networking_wireguard_vpn.allowed_ips }}"
     wireguard_auto_start: "{{ networking_wireguard_vpn.auto_start }}"
   tags: [always]
@@ -198,19 +198,43 @@
           - Review WireGuard logs: journalctl -u {{ wireguard_systemd_service }}
   tags: [install, config]
 
-- name: Validate WireGuard configuration
-  ansible.builtin.assert:
-    that:
-      - networking_wireguard_vpn.interface_name is defined
-      - networking_wireguard_vpn.private_key is defined
-      - networking_wireguard_vpn.public_key is defined
-      - networking_wireguard_vpn.address is defined
-      - networking_wireguard_vpn.dns is defined
-      - networking_wireguard_vpn.endpoint is defined
-      - networking_wireguard_vpn.allowed_ips is defined
-    fail_msg: "WireGuard configuration is incomplete. Please ensure all required variables are defined in networking_wireguard_vpn"
-    success_msg: "WireGuard configuration validation passed"
-  tags: [always]
+
+
+# =============================================================================
+## 04. SETUP VPN STATIC ROUTING
+# This section sets static routes for accessing client through the networks VPN
+# Not this VPN, but we need static routing because of the kill switch 
+# -----------------------------------------------------------------------------
+
+- name: Deploy static route for VPN clients
+  ansible.builtin.template:
+    src: templates/wireguard-static-unifi-vpn-route.network.j2
+    dest: /etc/systemd/network/10-{{ wireguard_interface }}-static-unifi-vpn-route.network
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  tags: [install, config, vpn-static-route]
+
+- name: Restart systemd-networkd to enable static route
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+  become: true
+  tags: [install, config, vpn-static-route]
+
+- name: Ensure UFW is enabled
+  community.general.ufw:
+    state: enabled
+  become: true
+  tags: [install, config, vpn-static-route]
+
+- name: Reload UFW to apply new rules
+  community.general.ufw:
+    state: reloaded
+  become: true
+  changed_when: false
+  tags: [install, config, vpn-static-route]
 
 
 
