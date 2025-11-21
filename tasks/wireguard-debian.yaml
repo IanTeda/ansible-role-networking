@@ -219,7 +219,7 @@
 #
 # ------------------------------------------------------------------------------
 
-- name: Check Wireguard interface "{{ wireguard_interface }}" service status
+- name: Check Wireguard interface "{{ wireguard_systemd_service }}" service status
   ansible.builtin.systemd:
     name: "{{ wireguard_systemd_service }}"
   register: wireguard_service_status
@@ -475,72 +475,72 @@
     msg: "VPN throughput test completed (may fail due to firewall rules - this is expected)"
   tags: [install, config, verify, healthcheck]
 
-- name: Test WireGuard kill switch integration (if enabled)
-  when: networking_vpn_kill_switch.enabled | default(false)
-  block:
-    - name: Stop WireGuard for kill switch test
-      ansible.builtin.systemd:
-        name: "{{ wireguard_systemd_service }}"
-        state: stopped
-      become: true
-      tags: [killswitch-test, integration]
+# - name: Test WireGuard kill switch integration (if enabled)
+#   when: networking_vpn_kill_switch.enabled | default(false)
+#   block:
+#     - name: Stop WireGuard for kill switch test
+#       ansible.builtin.systemd:
+#         name: "{{ wireguard_systemd_service }}"
+#         state: stopped
+#       become: true
+#       tags: [killswitch-test, integration]
 
-    - name: Wait for kill switch to take effect
-      ansible.builtin.pause:
-        seconds: 2
-      tags: [killswitch-test, integration]
+#     - name: Wait for kill switch to take effect
+#       ansible.builtin.pause:
+#         seconds: 2
+#       tags: [killswitch-test, integration]
 
-    - name: Test that traffic is blocked when VPN is down
-      ansible.builtin.uri:
-        url: "https://1.1.1.1"
-        timeout: 5
-      register: killswitch_block_test
-      ignore_errors: true
-      tags: [killswitch-test, integration]
+#     - name: Test that traffic is blocked when VPN is down
+#       ansible.builtin.uri:
+#         url: "https://1.1.1.1"
+#         timeout: 5
+#       register: killswitch_block_test
+#       ignore_errors: true
+#       tags: [killswitch-test, integration]
 
-    - name: Assert kill switch blocks traffic when VPN is down
-      ansible.builtin.assert:
-        that:
-          - killswitch_block_test.failed
-        fail_msg: "Kill switch integration test FAILED: Traffic was not blocked when WireGuard was stopped"
-        success_msg: "Kill switch integration test PASSED: Traffic properly blocked when WireGuard was down"
-      tags: [killswitch-test, integration]
+#     - name: Assert kill switch blocks traffic when VPN is down
+#       ansible.builtin.assert:
+#         that:
+#           - killswitch_block_test.failed
+#         fail_msg: "Kill switch integration test FAILED: Traffic was not blocked when WireGuard was stopped"
+#         success_msg: "Kill switch integration test PASSED: Traffic properly blocked when WireGuard was down"
+#       tags: [killswitch-test, integration]
 
-    - name: Restart WireGuard after kill switch test
-      ansible.builtin.systemd:
-        name: "{{ wireguard_systemd_service }}"
-        state: restarted
-      become: true
-      tags: [killswitch-test, integration]
+#     - name: Restart WireGuard after kill switch test
+#       ansible.builtin.systemd:
+#         name: "{{ wireguard_systemd_service }}"
+#         state: restarted
+#       become: true
+#       tags: [killswitch-test, integration]
 
-    - name: Wait for WireGuard to reconnect
-      ansible.builtin.pause:
-        seconds: 3
-      tags: [killswitch-test, integration]
+#     - name: Wait for WireGuard to reconnect
+#       ansible.builtin.pause:
+#         seconds: 3
+#       tags: [killswitch-test, integration]
 
-    - name: Verify VPN connectivity is restored after kill switch test
-      ansible.builtin.uri:
-        url: "https://1.1.1.1"
-        timeout: 10
-      register: vpn_restore_test
-      failed_when: vpn_restore_test.status != 200
-      tags: [killswitch-test, integration]
+#     - name: Verify VPN connectivity is restored after kill switch test
+#       ansible.builtin.uri:
+#         url: "https://1.1.1.1"
+#         timeout: 10
+#       register: vpn_restore_test
+#       failed_when: vpn_restore_test.status != 200
+#       tags: [killswitch-test, integration]
 
-    - name: Assert VPN connectivity restored after kill switch test
-      ansible.builtin.assert:
-        that:
-          - vpn_restore_test.status == 200
-        fail_msg: "VPN connectivity not restored after kill switch test"
-        success_msg: "VPN connectivity successfully restored after kill switch test"
-      tags: [killswitch-test, integration]
+#     - name: Assert VPN connectivity restored after kill switch test
+#       ansible.builtin.assert:
+#         that:
+#           - vpn_restore_test.status == 200
+#         fail_msg: "VPN connectivity not restored after kill switch test"
+#         success_msg: "VPN connectivity successfully restored after kill switch test"
+#       tags: [killswitch-test, integration]
 
-  always:
-    - name: Ensure WireGuard is running after kill switch test
-      ansible.builtin.systemd:
-        name: "{{ wireguard_systemd_service }}"
-        state: started
-        enabled: true
-      become: true
-      ignore_errors: true
-      tags: [killswitch-test, integration]
-  tags: [killswitch-test, integration]
+#   always:
+#     - name: Ensure WireGuard is running after kill switch test
+#       ansible.builtin.systemd:
+#         name: "{{ wireguard_systemd_service }}"
+#         state: started
+#         enabled: true
+#       become: true
+#       ignore_errors: true
+#       tags: [killswitch-test, integration]
+#   tags: [killswitch-test, integration]

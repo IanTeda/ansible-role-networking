@@ -33,14 +33,6 @@
     nfs_method: "{{ networking_nfs.method | default('fstab') }}"
   tags: [always]
 
-# - name: Display NFS facts for debugging
-#   ansible.builtin.debug:
-#     msg:
-#       - "Fact -> nfs_enabled: {{ nfs_enabled }}"
-#       - "Fact -> nfs_version: {{ nfs_version }}"
-#       - "Fact -> nfs_mounts: {{ nfs_mounts | length }} configured"
-#   tags: [debug]
-
 - name: Confirm NFS mount removal
   ansible.builtin.pause:
     prompt: |
@@ -92,37 +84,37 @@
 
 ## 02. CREATE MOUNT DIRECTORIES
 # -----------------------------------------------------------------------------
-- name: Ensure NFS group "{{ nfs_group }}" exists
-  ansible.builtin.group:
-    name: "{{ nfs_group }}"
-    state: present
-  become: true
-  tags: [install]
+# - name: Ensure NFS group "{{ nfs_group }}" exists
+#   ansible.builtin.group:
+#     name: "{{ nfs_group }}"
+#     state: present
+#   become: true
+#   tags: [install]
 
-- name: Ensure NFS user "{{ nfs_user }}" exists
-  ansible.builtin.user:
-    name: "{{ nfs_user }}"
-    system: true
-    create_home: false
-    shell: /bin/bash
-    comment: "NFS User Account"
-  become: true
-  tags: [install]
+# - name: Ensure NFS user "{{ nfs_user }}" exists
+#   ansible.builtin.user:
+#     name: "{{ nfs_user }}"
+#     system: true
+#     create_home: false
+#     shell: /bin/bash
+#     comment: "NFS User Account"
+#   become: true
+#   tags: [install]
 
-- name: Ensure default user is in NFS group
-  ansible.builtin.user:
-    name: "{{ vault_default_user_name | default(ansible_user) }}"
-    groups: "{{ nfs_group }}"
-    append: true
-  become: true
-  tags: [install, config]
+# - name: Ensure default user is in NFS group
+#   ansible.builtin.user:
+#     name: "{{ vault_default_user_name | default(ansible_user) }}"
+#     groups: "{{ nfs_group }}"
+#     append: true
+#   become: true
+#   tags: [install, config]
 
 - name: Create NFS mount directories
   ansible.builtin.file:
     path: "{{ item.mount_path }}"
     state: directory
-    owner: "{{ nfs_user }}"
-    group: "{{ nfs_group }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
     mode: "{{ item.mode | default('0755') }}"
   loop: "{{ nfs_mounts }}"
   become: true
@@ -156,15 +148,15 @@
 
     ## MOUNT NFS SHARES
     # -----------------------------------------------------------------------------
-    - name: Mount NFS shares
-      ansible.builtin.command:
-        cmd: "mount {{ item.mount_path }}"
-      loop: "{{ nfs_mounts }}"
-      register: mount_results
-      changed_when: mount_results.rc == 0
-      failed_when: mount_results.rc != 0
-      become: true
-      tags: [install, config]
+    # - name: Mount NFS shares
+    #   ansible.builtin.command:
+    #     cmd: "mount | grep -q '{{ item.mount_path }}' || mount '{{ item.mount_path }}'"
+    #   loop: "{{ nfs_mounts }}"
+    #   register: mount_results
+    #   changed_when: mount_results.rc == 0
+    #   failed_when: mount_results.rc != 0 and 'already mounted' not in mount_results.stderr
+    #   become: true
+    #   tags: [install, config]
 
     - name: Verify NFS mounts are active
       ansible.builtin.shell:
@@ -305,8 +297,8 @@
 - name: Set permissions on mounted NFS shares
   ansible.builtin.file:
     path: "{{ item.mount_path }}"
-    owner: "{{ nfs_user }}"
-    group: "{{ nfs_group }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
     mode: "{{ item.mode | default('0755') }}"
     state: directory
   loop: "{{ nfs_mounts }}"
@@ -342,7 +334,6 @@
   loop: "{{ nfs_mounts }}"
   register: nfs_showmount
   changed_when: false
-  failed_when: false  # Don't fail if showmount is not available on server
   become: true
   tags: [install, config, verify, healthcheck]
 
