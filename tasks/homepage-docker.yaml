@@ -41,6 +41,7 @@
     homepage_install_dir: "{{ networking_homepage.install_dir | default('/opt/homepage') }}"
     homepage_data_dir: "{{ networking_homepage.data_dir | default('/var/lib/homepage') }}"
     homepage_config_dir: "{{ networking_homepage.config_dir | default('/etc/homepage') }}"
+    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts | default('localhost') }}"
     homepage_allowed_networks: "{{ networking_homepage.allowed_networks | default(['192.168.1.0/24']) }}"
     homepage_nginx_enabled: "{{ networking_homepage.nginx_enabled | default(true) }}"
     homepage_nginx_root_enabled: "{{ networking_homepage.nginx_root_enabled | default(false) }}"
@@ -163,12 +164,33 @@
     - "{{ homepage_install_dir }}"
     - "{{ homepage_data_dir }}"
     - "{{ homepage_config_dir }}"
+    - "{{ homepage_config_dir }}/images"
   become: true
   tags: [install, config]
 
 
 ## Deploy Homepage Docker Compose
 # -----------------------------------------------------------------------------
+
+- name: Get homepage user UID
+  ansible.builtin.command: id -u {{ homepage_user }}
+  register: homepage_user_uid_result
+  changed_when: false
+  failed_when: false
+  tags: [install, config]
+
+- name: Get homepage group GID
+  ansible.builtin.command: getent group {{ homepage_group }}
+  register: homepage_group_gid_result
+  changed_when: false
+  failed_when: false
+  tags: [install, config]
+
+- name: Set homepage user UID fact
+  ansible.builtin.set_fact:
+    homepage_user_uid: "{{ homepage_user_uid_result.stdout | default('1000') }}"
+    homepage_group_gid: "{{ (homepage_group_gid_result.stdout.split(':')[2]) | default('1000') }}"
+  tags: [install, config]
 
 - name: Deploy Homepage Docker Compose file
   ansible.builtin.template:
@@ -296,7 +318,7 @@
   become: true
   notify: Reload Nginx
   when: homepage_nginx_enabled
-  tags: [install, config, nginx]
+  tags: [install, config, proxy]
 
 - name: Deploy new default site with homepage root
   when: homepage_nginx_root_enabled
@@ -308,7 +330,23 @@
     mode: '0644'
   become: true
   notify: Reload Nginx
-  tags: [install, config, nginx]
+  tags: [install, config, proxy]
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_syntax
+  failed_when: nginx_syntax.rc != 0
+  changed_when: false
+  become: true
+  tags: [install, config, proxy]
+
+- name: Enable and restart Nginx service
+  ansible.builtin.service:
+    name: nginx
+    state: restarted
+    enabled: yes
+  become: true
+  tags: [install, config, proxy]
 
 # ## Health checks and verification
 # # -----------------------------------------------------------------------------

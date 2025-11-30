@@ -109,16 +109,16 @@
 #   become: true
 #   tags: [install, config]
 
-- name: Create NFS mount directories
-  ansible.builtin.file:
-    path: "{{ item.mount_path }}"
-    state: directory
-    owner: "{{ item.owner }}"
-    group: "{{ item.group }}"
-    mode: "{{ item.mode | default('0755') }}"
-  loop: "{{ nfs_mounts }}"
-  become: true
-  tags: [install, config]
+# - name: Create NFS mount directories
+#   ansible.builtin.file:
+#     path: "{{ item.mount_path }}"
+#     state: directory
+#     owner: "{{ item.owner }}"
+#     group: "{{ item.group }}"
+#     mode: "{{ item.mode | default('0755') }}"
+#   loop: "{{ nfs_mounts }}"
+#   become: true
+#   tags: [install, config]
 
 
 - name: Configure and mount fstab entries

@@ -68,7 +68,7 @@
     homepage_ufw_profile_file: "/etc/ufw/applications.d/{{ homepage_systemd_name }}"
     homepage_nginx_config_file: "/etc/nginx/conf.d/{{ ansible_hostname }}-{{ homepage_systemd_name }}-location.conf"
     homepage_hostname: "{{ networking_homepage.hostname }}"
-    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts }}"
+    homepage_allowed_hosts: "{{ networking_homepage.allowed_hosts | default('localhost') }}"
     homepage_title: "{{ networking_homepage.title }}"
     homepage_theme: "{{ networking_homepage.theme }}"
     homepage_description: "{{ networking_homepage.description }}"

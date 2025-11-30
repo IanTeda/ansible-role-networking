@@ -24,6 +24,7 @@ services:
   homepage:
     image: {{ homepage_image }}:{{ homepage_image_tag | default('latest') }}
     container_name: {{ homepage_container_name }}
+    user: "{{ homepage_user_uid }}:{{ homepage_group_gid }}"
     restart: unless-stopped
     ports:
       - "{{ homepage_port }}:3000"
@@ -31,7 +32,7 @@ services:
       - {{ homepage_config_file }}
     volumes:
       - {{ homepage_config_dir }}:/app/config
-      - {{ homepage_data_dir }}:/app/public/images
+      - {{ homepage_config_dir }}/images:/app/public/images
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
       interval: 30s
